@@ -19,7 +19,7 @@ inputs:
     required: true
     type: string
   opt-ir-path:
-    description: path to the optimized XLS IR fil.e
+    description: path to the optimized XLS IR file.
     required: true
     type: string
   verilog-path:
@@ -46,10 +46,6 @@ inputs:
     description: model to use delay estimation.
     required: true
     type: string
-  verilog-reset-signal:
-    description: name of the verilog reset signal.
-    required: true
-    type: string
   artifact-name:
     description: name of the generated xls artifact
     type: string
@@ -60,12 +56,16 @@ runs:
   steps:
     - name: install XLS
       run: |
-        curl --show-error --silent -L https://github.com/google/xls/releases/download/${{ inputs.xls-version }}/xls-${{ inputs.xls-version }}-linux-x64.tar.gz | tar xvzf -
-        echo "$(readlink -f xls-${{ inputs.xls-version }}-linux-x64)" >> "$GITHUB_PATH"
+        curl --show-error --silent -L https://github.com/google/xls/releases/download/${{ inputs.xls-version }}/xls-${{ inputs.xls-version }}-linux-x64.tar.gz | tar xvzf - -C /tmp
+        echo "/tmp/xls-${{ inputs.xls-version }}-linux-x64" >> "$GITHUB_PATH"
+      shell: bash
+    - name: test DSLX
+      run: |
+        interpreter_main ${{ inputs.dslx-path }}
       shell: bash
     - name: convert DSLX to XLS ir
       run: |
-        ir_converter_main --top=${{ inputs.dslx-top}} ${{ inputs.dslx-path }} > ${{ inputs.ir-path }}
+        ir_converter_main --top=${{ inputs.dslx-top }} ${{ inputs.dslx-path }} > ${{ inputs.ir-path }}
       shell: bash
     - name: optimize XLS IR
       run: |
