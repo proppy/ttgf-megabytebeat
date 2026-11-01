@@ -50,7 +50,7 @@ The main module accept parameters from 4x 4-bit parameters buses and generate PW
 | `out1`  | `t|t%{b,a}|t%(2+{d,c})` | `a=0xf,b=0xf,c=0xf,d=0xf` |
 | `out2`  | `t>>a&b?t>>c:-t>>d` | `a=0x6,b=0x1,c=0x5,d=0x4` |
 | `out3`  | `t*(t>>a|t>>b)&{d,c}` | `a=0x9,b=0xd,c=0x0,d=0x1` |
-| `out7`  | `t*a&(t>>b)|t*c&(t>>d)` | `a=0x5,b=0x7,c=0x4,d=0xa` |
+| `out7`  | `t*a&(t>>b)|t*c&(t>>d)` | `a=0x5,b=0x7,c=0x3,d=0xa` |
 
 ## How to test
 
@@ -59,5 +59,5 @@ The main module accept parameters from 4x 4-bit parameters buses and generate PW
 
 ## External hardware
 
-- [Rotaty switches](https://akizukidenshi.com/catalog/g/g102276/) w/ 16 positions.
+- [Rotary switches](https://akizukidenshi.com/catalog/g/g102276/) w/ 16 positions.
 - Speakers or [TinyTapeout Audio PMOD](https://github.com/MichaelBell/tt-audio-pmod) if you want to hear `out7`.
