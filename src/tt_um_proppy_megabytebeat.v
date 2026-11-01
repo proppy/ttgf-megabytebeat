@@ -13,7 +13,7 @@ module tt_um_proppy_megabytebeat (
     input  wire       clk,      // clock
     input  wire       rst_n     // reset_n - low to reset
 );
-   wire						rst = !rst_n;
+   reg						rst;
    wire [3:0]					a = ui_in[3:0];
    wire						a_rdy[8];
    wire [3:0]					b = ui_in[7:4];
@@ -27,9 +27,12 @@ module tt_um_proppy_megabytebeat (
 
    reg [7:0]					clk_8;
    always @(posedge clk) begin
-      if (!rst_n) clk_8 <= 0;
-      else begin
+      if (!rst_n) begin
+         clk_8 <= 8'hff;
+         rst <= 1'b1;
+      end else begin
          clk_8 <= clk_8 + 1;
+         if (clk_8 == 8'h00) rst <= 1'b0;
       end
    end
 
