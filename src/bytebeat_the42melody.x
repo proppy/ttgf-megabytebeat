@@ -75,7 +75,7 @@ proc bytebeat_the42melody_test {
 
   next(state: ()) {
     let tok = token();
-    let (tok, pcm) = for (i, (tok, pcm)) in u16:0..u16:0x1ff {
+    let (tok, pcm) = for (i, (tok, pcm)) in u16:0..u16:0x200 {
       let (tok, sample) = recv(tok, output_r);
       (tok, update(pcm, i, sample))
     }((tok, u8[0x200]:[0, ...]));
