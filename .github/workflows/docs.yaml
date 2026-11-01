@@ -12,7 +12,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions/checkout@v5
       - name: Generate Verilog for bytebeat_the42melody
         uses: ./.github/actions/xls-action
         with:
