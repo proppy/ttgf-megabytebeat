@@ -9,10 +9,6 @@ fn the42melody(t: u32, a: u4, b: u4, c: u4, d: u4) -> u8 {
 }
 
 struct ByteBeatState {
-  a: u4,
-  b: u4,
-  c: u4,
-  d: u4,
   t: u32,
 }
 
@@ -24,7 +20,7 @@ proc bytebeat_the42melody {
   output_s: chan<u8> out;
 
   init {
-    ByteBeatState{a: u4:5, b: u4:7, c: u4:3, d: u4:10, t: u32:0}
+    ByteBeatState{t: u32:0}
   }
 
   config(a_r: chan<u4> in, b_r: chan<u4> in, c_r: chan<u4> in, d_r: chan<u4> in, output_s: chan<u8> out) {
@@ -33,15 +29,15 @@ proc bytebeat_the42melody {
 
   next(state: ByteBeatState) {
     let tok = token();
-    let (tok_a, a, _) = recv_non_blocking(tok, a_r, state.a);
-    let (tok_b, b, _) = recv_non_blocking(tok, b_r, state.b);
-    let (tok_c, c, _) = recv_non_blocking(tok, c_r, state.c);
-    let (tok_d, d, _) = recv_non_blocking(tok, d_r, state.d);
+    let (tok_a, a, _) = recv_non_blocking(tok, a_r, u4:0xa);
+    let (tok_b, b, _) = recv_non_blocking(tok, b_r, u4:0x2);
+    let (tok_c, c, _) = recv_non_blocking(tok, c_r, u4:0xa);
+    let (tok_d, d, _) = recv_non_blocking(tok, d_r, u4:0x0);
     let tok = join(tok_a, tok_b, tok_c, tok_d);
     let t = state.t;
     let s = the42melody(t, a, b, c, d);
     send(tok, output_s, s as u8);
-    ByteBeatState{a: a, b: b, c: c, d: d, t: t + u32:1}
+    ByteBeatState{t: t + u32:1}
   }
 }
 
