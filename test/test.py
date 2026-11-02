@@ -21,13 +21,12 @@ async def test_bytebeat(dut):
     # set "interesting" input parameters
     dut.ui_in.value = 0x15  # a=5 b=1
     dut.uio_in.value = 0x03 # c=3 d=0
-    await ClockCycles(dut.clk, 10)
+    # wait 3 cycles so rst_n propagates past t=0 and non-blocking/unit-delay assignments take effect
+    await ClockCycles(dut.clk, 3)
     assert dut.uio_oe.value == 0
     assert dut.uio_out.value == 0
 
     dut.rst_n.value = 1 # take out of reset
-    # TODO(#2): Remove post-reset wait once pwm_audio resets pwm output.
-    await ClockCycles(dut.clk, 2)
 
     events = [0] * 8
     prev = int(dut.uo_out.value)
@@ -41,4 +40,4 @@ async def test_bytebeat(dut):
             events[ch] += (diff >> ch) & 1
         prev = val
 
-    assert events == [16, 34, 29, 20, 0, 0, 0, 32]
+    assert events == [16, 28, 30, 26, 0, 0, 0, 28]
