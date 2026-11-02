@@ -26,6 +26,7 @@ module tt_um_proppy_megabytebeat (
    wire						pcm_vld[8];
 
    reg [7:0]					clk_8;
+   wire						sample_rdy = (clk_8 == 0);
    always @(posedge clk) begin
       if (!rst_n) clk_8 <= 0;
       else begin
@@ -33,7 +34,7 @@ module tt_um_proppy_megabytebeat (
       end
    end
 
-   bytebeat_the42melody bytebeat0(.clk(!clk_8[7]),
+   bytebeat_the42melody bytebeat0(.clk(clk),
 				  .reset(rst),
 				  .bytebeat_the42melody__a_r(a),
 				  .bytebeat_the42melody__a_r_vld(1'b1),
@@ -43,14 +44,14 @@ module tt_um_proppy_megabytebeat (
 				  .bytebeat_the42melody__c_r_vld(1'b1),
 				  .bytebeat_the42melody__d_r(d),
 				  .bytebeat_the42melody__d_r_vld(1'b1),
-				  .bytebeat_the42melody__output_s_rdy(1'b1),
+				  .bytebeat_the42melody__output_s_rdy(sample_rdy),
 				  .bytebeat_the42melody__output_s(pcm[0]),
 				  .bytebeat_the42melody__output_s_vld(pcm_vld[0]),
 				  .bytebeat_the42melody__a_r_rdy(a_rdy[0]),
 				  .bytebeat_the42melody__b_r_rdy(b_rdy[0]),
 				  .bytebeat_the42melody__c_r_rdy(c_rdy[0]),
 				  .bytebeat_the42melody__d_r_rdy(d_rdy[0]));
-   bytebeat_fractaltrees bytebeat1(.clk(!clk_8[7]),
+   bytebeat_fractaltrees bytebeat1(.clk(clk),
 				  .reset(rst),
 				  .bytebeat_fractaltrees__a_r(a),
 				  .bytebeat_fractaltrees__a_r_vld(1'b1),
@@ -60,14 +61,14 @@ module tt_um_proppy_megabytebeat (
 				  .bytebeat_fractaltrees__c_r_vld(1'b1),
 				  .bytebeat_fractaltrees__d_r(d),
 				  .bytebeat_fractaltrees__d_r_vld(1'b1),
-				  .bytebeat_fractaltrees__output_s_rdy(1'b1),
+				  .bytebeat_fractaltrees__output_s_rdy(sample_rdy),
 				  .bytebeat_fractaltrees__output_s(pcm[1]),
 				  .bytebeat_fractaltrees__output_s_vld(pcm_vld[1]),
 				  .bytebeat_fractaltrees__a_r_rdy(a_rdy[1]),
 				  .bytebeat_fractaltrees__b_r_rdy(b_rdy[1]),
 				  .bytebeat_fractaltrees__c_r_rdy(c_rdy[1]),
 				  .bytebeat_fractaltrees__d_r_rdy(d_rdy[1]));
-   bytebeat_untitleddroid bytebeat2(.clk(!clk_8[7]),
+   bytebeat_untitleddroid bytebeat2(.clk(clk),
 				  .reset(rst),
 				  .bytebeat_untitleddroid__a_r(a),
 				  .bytebeat_untitleddroid__a_r_vld(1'b1),
@@ -77,14 +78,14 @@ module tt_um_proppy_megabytebeat (
 				  .bytebeat_untitleddroid__c_r_vld(1'b1),
 				  .bytebeat_untitleddroid__d_r(d),
 				  .bytebeat_untitleddroid__d_r_vld(1'b1),
-				  .bytebeat_untitleddroid__output_s_rdy(1'b1),
+				  .bytebeat_untitleddroid__output_s_rdy(sample_rdy),
 				  .bytebeat_untitleddroid__output_s(pcm[2]),
 				  .bytebeat_untitleddroid__output_s_vld(pcm_vld[2]),
 				  .bytebeat_untitleddroid__a_r_rdy(a_rdy[2]),
 				  .bytebeat_untitleddroid__b_r_rdy(b_rdy[2]),
 				  .bytebeat_untitleddroid__c_r_rdy(c_rdy[2]),
 				  .bytebeat_untitleddroid__d_r_rdy(d_rdy[2]));
-   bytebeat_atunetoshare bytebeat3(.clk(!clk_8[7]),
+   bytebeat_atunetoshare bytebeat3(.clk(clk),
 				  .reset(rst),
 				  .bytebeat_atunetoshare__a_r(a),
 				  .bytebeat_atunetoshare__a_r_vld(1'b1),
@@ -94,14 +95,14 @@ module tt_um_proppy_megabytebeat (
 				  .bytebeat_atunetoshare__c_r_vld(1'b1),
 				  .bytebeat_atunetoshare__d_r(d),
 				  .bytebeat_atunetoshare__d_r_vld(1'b1),
-				  .bytebeat_atunetoshare__output_s_rdy(1'b1),
+				  .bytebeat_atunetoshare__output_s_rdy(sample_rdy),
 				  .bytebeat_atunetoshare__output_s(pcm[3]),
 				  .bytebeat_atunetoshare__output_s_vld(pcm_vld[3]),
 				  .bytebeat_atunetoshare__a_r_rdy(a_rdy[3]),
 				  .bytebeat_atunetoshare__b_r_rdy(b_rdy[3]),
 				  .bytebeat_atunetoshare__c_r_rdy(c_rdy[3]),
 				  .bytebeat_atunetoshare__d_r_rdy(d_rdy[3]));
-   bytebeat_sierpinskiharmony bytebeat7(.clk(!clk_8[7]),
+   bytebeat_sierpinskiharmony bytebeat7(.clk(clk),
 				  .reset(rst),
 				  .bytebeat_sierpinskiharmony__a_r(a),
 				  .bytebeat_sierpinskiharmony__a_r_vld(1'b1),
@@ -111,7 +112,7 @@ module tt_um_proppy_megabytebeat (
 				  .bytebeat_sierpinskiharmony__c_r_vld(1'b1),
 				  .bytebeat_sierpinskiharmony__d_r(d),
 				  .bytebeat_sierpinskiharmony__d_r_vld(1'b1),
-				  .bytebeat_sierpinskiharmony__output_s_rdy(1'b1),
+				  .bytebeat_sierpinskiharmony__output_s_rdy(sample_rdy),
 				  .bytebeat_sierpinskiharmony__output_s(pcm[7]),
 				  .bytebeat_sierpinskiharmony__output_s_vld(pcm_vld[7]),
 				  .bytebeat_sierpinskiharmony__a_r_rdy(a_rdy[7]),

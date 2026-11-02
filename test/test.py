@@ -21,16 +21,12 @@ async def test_bytebeat(dut):
     # set "interesting" input parameters
     dut.ui_in.value = 0x15  # a=5 b=1
     dut.uio_in.value = 0x03 # c=3 d=0
-    # TODO(#1): Remove pre-reset clock cycles once synchronous reset starvation on !clk_8[7] is fixed.
     await ClockCycles(dut.clk, 10)
-    dut.rst_n.value = 1
-    await ClockCycles(dut.clk, 130)
-    dut.rst_n.value = 0
-    await ClockCycles(dut.clk, 512)
     assert dut.uio_oe.value == 0
     assert dut.uio_out.value == 0
 
     dut.rst_n.value = 1 # take out of reset
+    # TODO(#2): Remove post-reset wait once pwm_audio resets pwm output.
     await ClockCycles(dut.clk, 2)
 
     events = [0] * 8
@@ -45,4 +41,4 @@ async def test_bytebeat(dut):
             events[ch] += (diff >> ch) & 1
         prev = val
 
-    assert events == [14, 32, 27, 18, 0, 0, 0, 30]
+    assert events == [16, 34, 29, 20, 0, 0, 0, 32]
