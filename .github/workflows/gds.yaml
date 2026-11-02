@@ -100,6 +100,8 @@ jobs:
     steps:
       - name: Run Tiny Tapeout Precheck
         uses: TinyTapeout/tt-gds-action/precheck@ttgf0p2
+        with:
+          tools-ref: 1de6149a612047494ed9d42b0119961515338ec0
 
   gl_test:
     needs: gds
