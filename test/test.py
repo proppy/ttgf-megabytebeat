@@ -71,7 +71,7 @@ def golden_sample(num_samples: int, a: int, b: int, c: int, d: int):
 
 def golden_pwm(num_samples: int, a: int, b: int, c: int, d: int):
     for s in golden_sample(num_samples, a, b, c, d):
-        # since each channel is shifted to a distinct bit position (1 << ch), sum() is equivalent to bitwise-ORing all 8 channels into uo_out
+        # sum/or (concat) individual pwm bit signal into a bus
         yield [
             sum((count < s[ch]) << ch for ch in range(len(FORMULAS)))
             for count in range(PWM_PERIOD)
