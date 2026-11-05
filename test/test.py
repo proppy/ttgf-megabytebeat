@@ -62,11 +62,8 @@ FORMULAS = [
 ]
 
 
-def golden_samples(num_samples: int, a: int, b: int, c: int, d: int) -> list[list[int]]:
-    return [
-        [fn(t, a, b, c, d) for t in range(num_samples)]
-        for fn in FORMULAS
-    ]
+def golden_sample(t: int, a: int, b: int, c: int, d: int) -> list[int]:
+    return [fn(t, a, b, c, d) for fn in FORMULAS]
 
 
 def write_wav(path: Path, samples: bytes) -> None:
@@ -102,7 +99,7 @@ async def test_bytebeat(dut):
     await ClockCycles(dut.clk, 1)
 
     num_samples = int(os.environ.get("NUM_SAMPLES", str(8 * SAMPLE_RATE)))
-    pcm_sim = [[] for _ in FORMULAS]
+    samples = []
 
     for _ in range(num_samples):
         counts = [0] * len(FORMULAS)
@@ -112,21 +109,21 @@ async def test_bytebeat(dut):
             val = int(dut.uo_out.value)
             for ch in range(len(FORMULAS)):
                 if (val >> ch) & 1:
+                    # count high cycles over the 256-clock period to recover the PWM duty cycle (8-bit PCM sample)
                     counts[ch] += 1
-        for ch in range(len(FORMULAS)):
-            pcm_sim[ch].append(counts[ch])
+        samples.append(counts)
 
     out_dir = Path(__file__).resolve().parent / "output"
     for ch, fn in enumerate(FORMULAS):
         if fn is not silence:
-            write_wav(out_dir / f"{fn.__name__}.wav", bytes(pcm_sim[ch]))
+            write_wav(out_dir / f"{fn.__name__}.wav", bytes([s[ch] for s in samples]))
 
-    expected = golden_samples(num_samples, a, b, c, d)
-    assert pcm_sim == expected, "\n" + "\n".join(
+    expected = [golden_sample(t, a, b, c, d) for t in range(num_samples)]
+    assert samples == expected, "\n" + "\n".join(
         list(
             difflib.unified_diff(
                 pprint.pformat(expected).splitlines(),
-                pprint.pformat(pcm_sim).splitlines(),
+                pprint.pformat(samples).splitlines(),
                 fromfile="expected",
                 tofile="got",
                 lineterm="",
