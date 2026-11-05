@@ -26,7 +26,7 @@ module tt_um_proppy_megabytebeat (
    wire						pcm_vld[8];
 
    reg [7:0]					clk_8;
-   wire						sample_rdy = (clk_8 == 0);
+   wire						sample_rdy = (clk_8 == 8'hff);
    always @(posedge clk) begin
       if (!rst_n) clk_8 <= 0;
       else begin
