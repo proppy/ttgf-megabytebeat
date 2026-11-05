@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import difflib
+import filecmp
 import os
 from pathlib import Path
 import pprint
@@ -146,6 +147,7 @@ async def test_wav(dut):
 
     num_samples = int(os.environ.get("NUM_SAMPLES", str(8 * SAMPLE_RATE)))
     samples = [[0] * len(FORMULAS) for _ in range(num_samples)]
+    rise_cycle = [0] * len(FORMULAS)
     prev = 0
 
     async def record_pwm():
@@ -156,20 +158,31 @@ async def test_wav(dut):
                 continue
             val = int(dut.uo_out.value)
             cycle = round((get_sim_time("ps") - edge0_ps) / PERIOD_PS)
-            t = cycle // PWM_PERIOD
-            if 0 <= t < num_samples:
-                # each PWM pulse rises at count == 0 and falls at count == sample
-                fell = prev & ~val
-                for ch in range(len(FORMULAS)):
-                    if (fell >> ch) & 1:
-                        samples[t][ch] = cycle % PWM_PERIOD
+            t = (cycle - 1) // PWM_PERIOD
+            rose = ~prev & val
+            fell = prev & ~val
+            for ch in range(len(FORMULAS)):
+                if (rose >> ch) & 1:
+                    rise_cycle[ch] = cycle
+                if (fell >> ch) & 1 and 0 <= t < num_samples:
+                    samples[t][ch] += cycle - rise_cycle[ch]
             prev = val
 
     task = cocotb.start_soon(record_pwm())
     await clock.cycles(num_samples * PWM_PERIOD)
     task.cancel()
 
+    expected = [golden_sample(t, a, b, c, d) for t in range(num_samples)]
     out_dir = Path(__file__).resolve().parent / "output"
     for ch, fn in enumerate(FORMULAS):
         if fn is not silence:
             write_wav(out_dir / f"{fn.__name__}.wav", bytes([s[ch] for s in samples]))
+            write_wav(out_dir / f"{fn.__name__}_golden.wav", bytes([s[ch] for s in expected]))
+
+    for fn in FORMULAS:
+        if fn is not silence:
+            wav_path = out_dir / f"{fn.__name__}.wav"
+            golden_path = out_dir / f"{fn.__name__}_golden.wav"
+            assert filecmp.cmp(wav_path, golden_path, shallow=False), (
+                f"{wav_path.name} differs from {golden_path.name}"
+            )
