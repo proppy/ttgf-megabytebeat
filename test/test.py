@@ -110,10 +110,10 @@ async def test_bytebeat(dut):
     # count high cycles over each 256-clock period to recover the PWM duty cycle (8-bit PCM sample)
     samples = [
         [
-            sum((val >> ch) & 1 for val in raw[t * PWM_PERIOD : (t + 1) * PWM_PERIOD])
+            sum((val >> ch) & 1 for val in raw[i : i + PWM_PERIOD])
             for ch in range(len(FORMULAS))
         ]
-        for t in range(num_samples)
+        for i in range(0, len(raw), PWM_PERIOD)
     ]
 
     expected = [golden_sample(t, a, b, c, d) for t in range(num_samples)]
@@ -128,6 +128,20 @@ async def test_bytebeat(dut):
             )
         )[:32]
     )
+
+
+async def collect_pwm_events(dut, num_cycles: int):
+    edge0_ps = get_sim_time("ps")
+    yield (0, int(dut.uo_out.value))
+    while True:
+        await ValueChange(dut.uo_out)
+        if not dut.uo_out.value.is_resolvable:
+            continue
+        cycle = round((get_sim_time("ps") - edge0_ps) / PERIOD_PS)
+        if cycle >= num_cycles:
+            yield (num_cycles, 0)
+            break
+        yield (cycle, int(dut.uo_out.value))
 
 
 @cocotb.test()
@@ -147,41 +161,29 @@ async def test_wav(dut):
     dut.rst_n.value = 1 # take out of reset
     # advance to the first rising edge where rst_n == 1 is sampled (start of the first 256-clock PWM period)
     await ClockCycles(dut.clk, 1)
-    edge0_ps = get_sim_time("ps")
 
     num_samples = int(os.environ.get("NUM_SAMPLES", str(8 * SAMPLE_RATE)))
-    events = [(edge0_ps, int(dut.uo_out.value))]
-
-    async def record_pwm():
-        while True:
-            await ValueChange(dut.uo_out)
-            if dut.uo_out.value.is_resolvable:
-                events.append((get_sim_time("ps"), int(dut.uo_out.value)))
-
-    task = cocotb.start_soon(record_pwm())
-    await clock.cycles(num_samples * PWM_PERIOD)
-    task.cancel()
-    events.append((get_sim_time("ps"), 0))
+    events = [e async for e in collect_pwm_events(dut, num_samples * PWM_PERIOD)]
 
     samples = [[0] * len(FORMULAS) for _ in range(num_samples)]
-    for (t0, val), (t1, _) in zip(events, events[1:]):
-        t = round((t0 - edge0_ps) / PERIOD_PS) // PWM_PERIOD
-        cycles = round((t1 - t0) / PERIOD_PS)
-        if 0 <= t < num_samples:
-            for ch in range(len(FORMULAS)):
-                if (val >> ch) & 1:
-                    samples[t][ch] += cycles
+    for (c0, val), (c1, _) in zip(events, events[1:]):
+        t = c0 // PWM_PERIOD
+        cycles = c1 - c0
+        for ch in range(len(FORMULAS)):
+            if (val >> ch) & 1:
+                samples[t][ch] += cycles
 
     expected = [golden_sample(t, a, b, c, d) for t in range(num_samples)]
+    sim_suffix = "glsim" if os.environ.get("GATES") == "yes" else "sim"
     out_dir = Path(__file__).resolve().parent / "output"
     for ch, fn in enumerate(FORMULAS):
         if fn is not silence:
-            write_wav(out_dir / f"{fn.__name__}.wav", bytes([s[ch] for s in samples]))
+            write_wav(out_dir / f"{fn.__name__}_{sim_suffix}.wav", bytes([s[ch] for s in samples]))
             write_wav(out_dir / f"{fn.__name__}_golden.wav", bytes([s[ch] for s in expected]))
 
     for fn in FORMULAS:
         if fn is not silence:
-            wav_path = out_dir / f"{fn.__name__}.wav"
+            wav_path = out_dir / f"{fn.__name__}_{sim_suffix}.wav"
             golden_path = out_dir / f"{fn.__name__}_golden.wav"
             assert filecmp.cmp(wav_path, golden_path, shallow=False), (
                 f"{wav_path.name} differs from {golden_path.name}"
