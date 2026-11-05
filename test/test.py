@@ -129,9 +129,10 @@ async def test_bytebeat(dut):
     await ClockCycles(dut.clk, 1)
 
     num_samples = 16
-    expected = golden_pwm(num_samples, a, b, c, d)
-    async for frame in collect_pwm(dut, num_samples):
-        exp_frame = next(expected)
+    for frame, exp_frame in zip(
+        [f async for f in collect_pwm(dut, num_samples)],
+        golden_pwm(num_samples, a, b, c, d),
+    ):
         assert frame == exp_frame, "\n" + "\n".join(
             difflib.unified_diff(
                 pprint.pformat(exp_frame).splitlines(),
