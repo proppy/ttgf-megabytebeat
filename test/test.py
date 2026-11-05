@@ -101,19 +101,20 @@ async def test_bytebeat(dut):
     await ClockCycles(dut.clk, 1)
 
     num_samples = 16
-    samples = []
+    raw = []
+    for _ in range(num_samples * PWM_PERIOD):
+        await RisingEdge(dut.clk)
+        assert dut.uo_out.value.is_resolvable
+        raw.append(int(dut.uo_out.value))
 
-    for _ in range(num_samples):
-        counts = [0] * len(FORMULAS)
-        for _ in range(PWM_PERIOD):
-            await RisingEdge(dut.clk)
-            assert dut.uo_out.value.is_resolvable
-            val = int(dut.uo_out.value)
-            for ch in range(len(FORMULAS)):
-                if (val >> ch) & 1:
-                    # count high cycles over the 256-clock period to recover the PWM duty cycle (8-bit PCM sample)
-                    counts[ch] += 1
-        samples.append(counts)
+    # count high cycles over each 256-clock period to recover the PWM duty cycle (8-bit PCM sample)
+    samples = [
+        [
+            sum((val >> ch) & 1 for val in raw[t * PWM_PERIOD : (t + 1) * PWM_PERIOD])
+            for ch in range(len(FORMULAS))
+        ]
+        for t in range(num_samples)
+    ]
 
     expected = [golden_sample(t, a, b, c, d) for t in range(num_samples)]
     assert samples == expected, "\n" + "\n".join(
@@ -149,31 +150,27 @@ async def test_wav(dut):
     edge0_ps = get_sim_time("ps")
 
     num_samples = int(os.environ.get("NUM_SAMPLES", str(8 * SAMPLE_RATE)))
-    samples = [[0] * len(FORMULAS) for _ in range(num_samples)]
-    rise_cycle = [0] * len(FORMULAS)
-    prev = 0
+    events = [(edge0_ps, int(dut.uo_out.value))]
 
     async def record_pwm():
-        nonlocal prev
         while True:
             await ValueChange(dut.uo_out)
-            if not dut.uo_out.value.is_resolvable:
-                continue
-            val = int(dut.uo_out.value)
-            cycle = round((get_sim_time("ps") - edge0_ps) / PERIOD_PS)
-            t = (cycle - 1) // PWM_PERIOD
-            rose = ~prev & val
-            fell = prev & ~val
-            for ch in range(len(FORMULAS)):
-                if (rose >> ch) & 1:
-                    rise_cycle[ch] = cycle
-                if (fell >> ch) & 1 and 0 <= t < num_samples:
-                    samples[t][ch] += cycle - rise_cycle[ch]
-            prev = val
+            if dut.uo_out.value.is_resolvable:
+                events.append((get_sim_time("ps"), int(dut.uo_out.value)))
 
     task = cocotb.start_soon(record_pwm())
     await clock.cycles(num_samples * PWM_PERIOD)
     task.cancel()
+    events.append((get_sim_time("ps"), 0))
+
+    samples = [[0] * len(FORMULAS) for _ in range(num_samples)]
+    for (t0, val), (t1, _) in zip(events, events[1:]):
+        t = round((t0 - edge0_ps) / PERIOD_PS) // PWM_PERIOD
+        cycles = round((t1 - t0) / PERIOD_PS)
+        if 0 <= t < num_samples:
+            for ch in range(len(FORMULAS)):
+                if (val >> ch) & 1:
+                    samples[t][ch] += cycles
 
     expected = [golden_sample(t, a, b, c, d) for t in range(num_samples)]
     out_dir = Path(__file__).resolve().parent / "output"
