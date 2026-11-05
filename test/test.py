@@ -18,6 +18,7 @@ SAMPLE_RATE = 8000
 PWM_PERIOD = 256
 FREQ = SAMPLE_RATE * PWM_PERIOD
 PERIOD_PS = 488280
+SIM_SUFFIX = "glsim" if os.environ.get("GATES") == "yes" else "sim"
 
 
 def the42melody(t: int, a: int, b: int, c: int, d: int) -> int:
@@ -122,8 +123,8 @@ async def test_bytebeat(dut):
             difflib.unified_diff(
                 pprint.pformat(expected).splitlines(),
                 pprint.pformat(samples).splitlines(),
-                fromfile="expected",
-                tofile="got",
+                fromfile="golden",
+                tofile=SIM_SUFFIX,
                 lineterm="",
             )
         )[:32]
@@ -174,16 +175,15 @@ async def test_wav(dut):
                 samples[t][ch] += cycles
 
     expected = [golden_sample(t, a, b, c, d) for t in range(num_samples)]
-    sim_suffix = "glsim" if os.environ.get("GATES") == "yes" else "sim"
     out_dir = Path(__file__).resolve().parent / "output"
     for ch, fn in enumerate(FORMULAS):
         if fn is not silence:
-            write_wav(out_dir / f"{fn.__name__}_{sim_suffix}.wav", bytes([s[ch] for s in samples]))
+            write_wav(out_dir / f"{fn.__name__}_{SIM_SUFFIX}.wav", bytes([s[ch] for s in samples]))
             write_wav(out_dir / f"{fn.__name__}_golden.wav", bytes([s[ch] for s in expected]))
 
     for fn in FORMULAS:
         if fn is not silence:
-            wav_path = out_dir / f"{fn.__name__}_{sim_suffix}.wav"
+            wav_path = out_dir / f"{fn.__name__}_{SIM_SUFFIX}.wav"
             golden_path = out_dir / f"{fn.__name__}_golden.wav"
             assert filecmp.cmp(wav_path, golden_path, shallow=False), (
                 f"{wav_path.name} differs from {golden_path.name}"
