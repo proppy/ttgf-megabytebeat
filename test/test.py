@@ -1,6 +1,7 @@
 # Copyright 2025 Google LLC.
 # SPDX-License-Identifier: Apache-2.0
 
+import difflib
 import os
 from pathlib import Path
 import wave
@@ -16,34 +17,57 @@ PWM_PERIOD = 256
 FREQ = SAMPLE_RATE * PWM_PERIOD
 PERIOD_PS = 488280
 HALF_PERIOD_PS = PERIOD_PS // 2
-CHANNELS = {
-    0: "the42melody",
-    1: "fractaltrees",
-    2: "untitleddroid",
-    3: "atunetoshare",
-    7: "sierpinskiharmony",
-}
 
 
-def golden_sample(ch: int, t: int, a: int, b: int, c: int, d: int) -> int:
-    t &= 0xFFFFFFFF
+def the42melody(t: int, a: int, b: int, c: int, d: int) -> int:
     ab = (b << 4) | a
     cd = (d << 4) | c
-    if ch == 0:
-        s = t * (ab & (t >> cd))
-    elif ch == 1:
-        ab_nz = 1 if ab == 0 else ab
-        s = t | (t % ab_nz) | (t % (cd + 2))
-    elif ch == 2:
-        cond = (t >> a) & b
-        s = (t >> c) if cond != 0 else (((~t + 1) & 0xFFFFFFFF) >> d)
-    elif ch == 3:
-        s = (t * ((t >> a) | (t >> b))) & cd
-    elif ch == 7:
-        s = ((t * a) & (t >> b)) | ((t * c) & (t >> d))
-    else:
-        s = 0
+    return (t * (ab & (t >> cd))) & 0xFF
+
+
+def fractaltrees(t: int, a: int, b: int, c: int, d: int) -> int:
+    ab = (b << 4) | a
+    ab_nz = 1 if ab == 0 else ab
+    cd = (d << 4) | c
+    return (t | (t % ab_nz) | (t % (cd + 2))) & 0xFF
+
+
+def untitleddroid(t: int, a: int, b: int, c: int, d: int) -> int:
+    cond = (t >> a) & b
+    s = (t >> c) if cond != 0 else (((~t + 1) & 0xFFFFFFFF) >> d)
     return s & 0xFF
+
+
+def atunetoshare(t: int, a: int, b: int, c: int, d: int) -> int:
+    cd = (d << 4) | c
+    return (t * ((t >> a) | (t >> b)) & cd) & 0xFF
+
+
+def sierpinskiharmony(t: int, a: int, b: int, c: int, d: int) -> int:
+    return (((t * a) & (t >> b)) | ((t * c) & (t >> d))) & 0xFF
+
+
+def silence(t: int, a: int, b: int, c: int, d: int) -> int:
+    return 0
+
+
+FORMULAS = [
+    the42melody,
+    fractaltrees,
+    untitleddroid,
+    atunetoshare,
+    silence,
+    silence,
+    silence,
+    sierpinskiharmony,
+]
+
+
+def golden_samples(num_samples: int, a: int, b: int, c: int, d: int) -> list[bytes]:
+    return [
+        bytes(fn(t & 0xFFFFFFFF, a, b, c, d) for t in range(num_samples))
+        for fn in FORMULAS
+    ]
 
 
 def write_wav(path: Path, samples: bytes) -> None:
@@ -124,19 +148,26 @@ async def test_bytebeat(dut):
             cur = nxt
 
     out_dir = Path(__file__).resolve().parent / "output"
-    for ch in range(8):
+    for ch, fn in enumerate(FORMULAS):
+        if fn is not silence:
+            write_wav(out_dir / f"{fn.__name__}.wav", bytes(pcm_sim[ch]))
+
+    expected = golden_samples(num_samples, a, b, c, d)
+    for ch, fn in enumerate(FORMULAS):
         sim_bytes = bytes(pcm_sim[ch])
-        if ch in CHANNELS:
-            name = CHANNELS[ch]
-            write_wav(out_dir / f"{name}.wav", sim_bytes)
-            expected_bytes = bytes(
-                golden_sample(ch, t, a, b, c, d) for t in range(num_samples)
+        expected_bytes = expected[ch]
+        if sim_bytes != expected_bytes:
+            diff = "\n".join(
+                list(
+                    difflib.unified_diff(
+                        [f"t={t}: {b}" for t, b in enumerate(expected_bytes)],
+                        [f"t={t}: {b}" for t, b in enumerate(sim_bytes)],
+                        fromfile="expected",
+                        tofile="got",
+                        lineterm="",
+                    )
+                )[:32]
             )
             assert sim_bytes == expected_bytes, (
-                f"Channel {ch} ({name}) mismatch: "
-                f"got {list(sim_bytes[:16])}, expected {list(expected_bytes[:16])}"
-            )
-        else:
-            assert sim_bytes == bytes(num_samples), (
-                f"Unused channel {ch} non-zero: {list(sim_bytes[:16])}"
+                f"channel {ch} ({fn.__name__}) mismatch:\n{diff}"
             )
