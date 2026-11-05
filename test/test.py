@@ -4,19 +4,18 @@
 import difflib
 import os
 from pathlib import Path
+import pprint
 import wave
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, Timer, ValueChange
-from cocotb.utils import get_sim_time
+from cocotb.triggers import ClockCycles, RisingEdge
 
 
 SAMPLE_RATE = 8000
 PWM_PERIOD = 256
 FREQ = SAMPLE_RATE * PWM_PERIOD
 PERIOD_PS = 488280
-HALF_PERIOD_PS = PERIOD_PS // 2
 
 
 def the42melody(t: int, a: int, b: int, c: int, d: int) -> int:
@@ -63,9 +62,9 @@ FORMULAS = [
 ]
 
 
-def golden_samples(num_samples: int, a: int, b: int, c: int, d: int) -> list[bytes]:
+def golden_samples(num_samples: int, a: int, b: int, c: int, d: int) -> list[list[int]]:
     return [
-        bytes(fn(t & 0xFFFFFFFF, a, b, c, d) for t in range(num_samples))
+        [fn(t & 0xFFFFFFFF, a, b, c, d) for t in range(num_samples)]
         for fn in FORMULAS
     ]
 
@@ -101,51 +100,22 @@ async def test_bytebeat(dut):
     dut.rst_n.value = 1 # take out of reset
     # advance to the first rising edge where rst_n == 1 is sampled (count == 0)
     await ClockCycles(dut.clk, 1)
-    edge0_ps = int(get_sim_time("ps"))
-    # step to the midpoint of cycle 0 so NBA / gate-level delays have settled
-    await Timer(HALF_PERIOD_PS, unit="ps")
 
     num_samples = int(os.environ.get("NUM_SAMPLES", str(8 * SAMPLE_RATE)))
-    total_cycles = num_samples * PWM_PERIOD
-    assert dut.uo_out.value.is_resolvable
-    transitions = [(0, int(dut.uo_out.value))]
+    pcm_sim = [[] for _ in FORMULAS]
+    clk_edge = RisingEdge(dut.clk)
 
-    async def monitor_uo_out():
-        val_change = ValueChange(dut.uo_out)
-        while True:
-            await val_change
+    for _ in range(num_samples):
+        counts = [0] * len(FORMULAS)
+        for _ in range(PWM_PERIOD):
+            await clk_edge
             assert dut.uo_out.value.is_resolvable
-            c_idx = (int(get_sim_time("ps")) - edge0_ps + HALF_PERIOD_PS) // PERIOD_PS
             val = int(dut.uo_out.value)
-            if transitions[-1][0] == c_idx:
-                transitions[-1] = (c_idx, val)
-            else:
-                transitions.append((c_idx, val))
-
-    monitor_task = cocotb.start_soon(monitor_uo_out())
-    await Timer(total_cycles * PERIOD_PS, unit="ps")
-    monitor_task.cancel()
-    if transitions[-1][0] < total_cycles:
-        transitions.append((total_cycles, transitions[-1][1]))
-
-    pcm_sim = {ch: bytearray(num_samples) for ch in range(8)}
-    for i in range(len(transitions) - 1):
-        c0, val = transitions[i]
-        c1, _ = transitions[i + 1]
-        if c0 >= total_cycles or val == 0:
-            continue
-        if c1 > total_cycles:
-            c1 = total_cycles
-        cur = c0
-        while cur < c1:
-            t = cur // PWM_PERIOD
-            frame_end = (t + 1) * PWM_PERIOD
-            nxt = c1 if c1 < frame_end else frame_end
-            dk = nxt - cur
-            for ch in range(8):
+            for ch in range(len(FORMULAS)):
                 if (val >> ch) & 1:
-                    pcm_sim[ch][t] += dk
-            cur = nxt
+                    counts[ch] += 1
+        for ch in range(len(FORMULAS)):
+            pcm_sim[ch].append(counts[ch])
 
     out_dir = Path(__file__).resolve().parent / "output"
     for ch, fn in enumerate(FORMULAS):
@@ -153,21 +123,14 @@ async def test_bytebeat(dut):
             write_wav(out_dir / f"{fn.__name__}.wav", bytes(pcm_sim[ch]))
 
     expected = golden_samples(num_samples, a, b, c, d)
-    for ch, fn in enumerate(FORMULAS):
-        sim_bytes = bytes(pcm_sim[ch])
-        expected_bytes = expected[ch]
-        if sim_bytes != expected_bytes:
-            diff = "\n".join(
-                list(
-                    difflib.unified_diff(
-                        [f"t={t}: {b}" for t, b in enumerate(expected_bytes)],
-                        [f"t={t}: {b}" for t, b in enumerate(sim_bytes)],
-                        fromfile="expected",
-                        tofile="got",
-                        lineterm="",
-                    )
-                )[:32]
+    assert pcm_sim == expected, "\n" + "\n".join(
+        list(
+            difflib.unified_diff(
+                pprint.pformat(expected).splitlines(),
+                pprint.pformat(pcm_sim).splitlines(),
+                fromfile="expected",
+                tofile="got",
+                lineterm="",
             )
-            assert sim_bytes == expected_bytes, (
-                f"channel {ch} ({fn.__name__}) mismatch:\n{diff}"
-            )
+        )[:32]
+    )
