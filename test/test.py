@@ -9,7 +9,8 @@ import wave
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, RisingEdge
+from cocotb.triggers import ClockCycles, RisingEdge, ValueChange
+from cocotb.utils import get_sim_time
 
 
 SAMPLE_RATE = 8000
@@ -98,7 +99,7 @@ async def test_bytebeat(dut):
     # advance to the first rising edge where rst_n == 1 is sampled (count == 0)
     await ClockCycles(dut.clk, 1)
 
-    num_samples = int(os.environ.get("NUM_SAMPLES", str(8 * SAMPLE_RATE)))
+    num_samples = 16
     samples = []
 
     for _ in range(num_samples):
@@ -113,11 +114,6 @@ async def test_bytebeat(dut):
                     counts[ch] += 1
         samples.append(counts)
 
-    out_dir = Path(__file__).resolve().parent / "output"
-    for ch, fn in enumerate(FORMULAS):
-        if fn is not silence:
-            write_wav(out_dir / f"{fn.__name__}.wav", bytes([s[ch] for s in samples]))
-
     expected = [golden_sample(t, a, b, c, d) for t in range(num_samples)]
     assert samples == expected, "\n" + "\n".join(
         list(
@@ -130,3 +126,50 @@ async def test_bytebeat(dut):
             )
         )[:32]
     )
+
+
+@cocotb.test()
+async def test_wav(dut):
+    clock = Clock(dut.clk, PERIOD_PS, unit="ps", impl="gpi")
+    cocotb.start_soon(clock.start())
+
+    a, b, c, d = 0x5, 0x1, 0x3, 0x0
+    dut.ena.value = 1
+    dut.rst_n.value = 0
+    dut.ui_in.value = (b << 4) | a
+    dut.uio_in.value = (d << 4) | c
+    await ClockCycles(dut.clk, 3)
+
+    dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 1)
+    edge0_ps = get_sim_time("ps")
+
+    num_samples = int(os.environ.get("NUM_SAMPLES", str(8 * SAMPLE_RATE)))
+    samples = [[0] * len(FORMULAS) for _ in range(num_samples)]
+    prev = 0
+
+    async def record_pwm():
+        nonlocal prev
+        while True:
+            await ValueChange(dut.uo_out)
+            if not dut.uo_out.value.is_resolvable:
+                continue
+            val = int(dut.uo_out.value)
+            cycle = round((get_sim_time("ps") - edge0_ps) / PERIOD_PS)
+            t = cycle // PWM_PERIOD
+            if 0 <= t < num_samples:
+                # each PWM pulse rises at count == 0 and falls at count == sample
+                fell = prev & ~val
+                for ch in range(len(FORMULAS)):
+                    if (fell >> ch) & 1:
+                        samples[t][ch] = cycle % PWM_PERIOD
+            prev = val
+
+    task = cocotb.start_soon(record_pwm())
+    await clock.cycles(num_samples * PWM_PERIOD)
+    task.cancel()
+
+    out_dir = Path(__file__).resolve().parent / "output"
+    for ch, fn in enumerate(FORMULAS):
+        if fn is not silence:
+            write_wav(out_dir / f"{fn.__name__}.wav", bytes([s[ch] for s in samples]))
