@@ -3,6 +3,8 @@
 
 import difflib
 import filecmp
+import functools
+import operator
 import os
 from pathlib import Path
 import pprint
@@ -72,7 +74,7 @@ def golden_sample(num_samples: int, a: int, b: int, c: int, d: int):
 def golden_pwm(num_samples: int, a: int, b: int, c: int, d: int):
     for s in golden_sample(num_samples, a, b, c, d):
         yield [
-            sum((count < s[ch]) << ch for ch in range(len(FORMULAS)))
+            functools.reduce(operator.or_, ((count < val) << ch for ch, val in enumerate(s)))
             for count in range(PWM_PERIOD)
         ]
 
