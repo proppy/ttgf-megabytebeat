@@ -64,7 +64,7 @@ FORMULAS = [
 
 def golden_samples(num_samples: int, a: int, b: int, c: int, d: int) -> list[list[int]]:
     return [
-        [fn(t & 0xFFFFFFFF, a, b, c, d) for t in range(num_samples)]
+        [fn(t, a, b, c, d) for t in range(num_samples)]
         for fn in FORMULAS
     ]
 
@@ -103,12 +103,11 @@ async def test_bytebeat(dut):
 
     num_samples = int(os.environ.get("NUM_SAMPLES", str(8 * SAMPLE_RATE)))
     pcm_sim = [[] for _ in FORMULAS]
-    clk_edge = RisingEdge(dut.clk)
 
     for _ in range(num_samples):
         counts = [0] * len(FORMULAS)
         for _ in range(PWM_PERIOD):
-            await clk_edge
+            await RisingEdge(dut.clk)
             assert dut.uo_out.value.is_resolvable
             val = int(dut.uo_out.value)
             for ch in range(len(FORMULAS)):
