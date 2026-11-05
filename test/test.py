@@ -7,12 +7,15 @@ import wave
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
+from cocotb.triggers import ClockCycles, Timer, ValueChange
+from cocotb.utils import get_sim_time
 
 
 SAMPLE_RATE = 8000
 PWM_PERIOD = 256
 FREQ = SAMPLE_RATE * PWM_PERIOD
+PERIOD_PS = 488280
+HALF_PERIOD_PS = PERIOD_PS // 2
 CHANNELS = {
     0: "the42melody",
     1: "fractaltrees",
@@ -57,7 +60,7 @@ async def test_bytebeat(dut):
     dut._log.info("Start")
 
     # Set the clock to ~2048000hz (8000 * 256)
-    clock = Clock(dut.clk, 488280, unit="ps")
+    clock = Clock(dut.clk, PERIOD_PS, unit="ps", impl="gpi")
     cocotb.start_soon(clock.start())
 
     a, b, c, d = 0x5, 0x1, 0x3, 0x0
@@ -72,21 +75,53 @@ async def test_bytebeat(dut):
     assert dut.uio_out.value == 0
 
     dut.rst_n.value = 1 # take out of reset
+    # advance to the first rising edge where rst_n == 1 is sampled (count == 0)
     await ClockCycles(dut.clk, 1)
+    edge0_ps = int(get_sim_time("ps"))
+    # step to the midpoint of cycle 0 so NBA / gate-level delays have settled
+    await Timer(HALF_PERIOD_PS, unit="ps")
 
-    num_samples = int(os.environ.get("NUM_SAMPLES", "16"))
-    pcm_sim = {ch: bytearray() for ch in range(8)}
+    num_samples = int(os.environ.get("NUM_SAMPLES", str(8 * SAMPLE_RATE)))
+    total_cycles = num_samples * PWM_PERIOD
+    assert dut.uo_out.value.is_resolvable
+    transitions = [(0, int(dut.uo_out.value))]
 
-    for _ in range(num_samples):
-        counts = [0] * 8
-        for _ in range(PWM_PERIOD):
-            await ClockCycles(dut.clk, 1)
+    async def monitor_uo_out():
+        val_change = ValueChange(dut.uo_out)
+        while True:
+            await val_change
             assert dut.uo_out.value.is_resolvable
+            c_idx = (int(get_sim_time("ps")) - edge0_ps + HALF_PERIOD_PS) // PERIOD_PS
             val = int(dut.uo_out.value)
+            if transitions[-1][0] == c_idx:
+                transitions[-1] = (c_idx, val)
+            else:
+                transitions.append((c_idx, val))
+
+    monitor_task = cocotb.start_soon(monitor_uo_out())
+    await Timer(total_cycles * PERIOD_PS, unit="ps")
+    monitor_task.cancel()
+    if transitions[-1][0] < total_cycles:
+        transitions.append((total_cycles, transitions[-1][1]))
+
+    pcm_sim = {ch: bytearray(num_samples) for ch in range(8)}
+    for i in range(len(transitions) - 1):
+        c0, val = transitions[i]
+        c1, _ = transitions[i + 1]
+        if c0 >= total_cycles or val == 0:
+            continue
+        if c1 > total_cycles:
+            c1 = total_cycles
+        cur = c0
+        while cur < c1:
+            t = cur // PWM_PERIOD
+            frame_end = (t + 1) * PWM_PERIOD
+            nxt = c1 if c1 < frame_end else frame_end
+            dk = nxt - cur
             for ch in range(8):
-                counts[ch] += (val >> ch) & 1
-        for ch in range(8):
-            pcm_sim[ch].append(counts[ch])
+                if (val >> ch) & 1:
+                    pcm_sim[ch][t] += dk
+            cur = nxt
 
     out_dir = Path(__file__).resolve().parent / "output"
     for ch in range(8):
@@ -99,9 +134,9 @@ async def test_bytebeat(dut):
             )
             assert sim_bytes == expected_bytes, (
                 f"Channel {ch} ({name}) mismatch: "
-                f"got {list(sim_bytes)}, expected {list(expected_bytes)}"
+                f"got {list(sim_bytes[:16])}, expected {list(expected_bytes[:16])}"
             )
         else:
             assert sim_bytes == bytes(num_samples), (
-                f"Unused channel {ch} non-zero: {list(sim_bytes)}"
+                f"Unused channel {ch} non-zero: {list(sim_bytes[:16])}"
             )
