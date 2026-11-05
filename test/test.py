@@ -64,8 +64,17 @@ FORMULAS = [
 ]
 
 
-def golden_sample(t: int, a: int, b: int, c: int, d: int) -> list[int]:
-    return [fn(t, a, b, c, d) for fn in FORMULAS]
+def golden_sample(num_samples: int, a: int, b: int, c: int, d: int):
+    for t in range(num_samples):
+        yield [fn(t, a, b, c, d) for fn in FORMULAS]
+
+
+def golden_pwm(num_samples: int, a: int, b: int, c: int, d: int):
+    for s in golden_sample(num_samples, a, b, c, d):
+        yield [
+            sum((count < s[ch]) << ch for ch in range(len(FORMULAS)))
+            for count in range(PWM_PERIOD)
+        ]
 
 
 def write_wav(path: Path, samples: bytes) -> None:
@@ -77,23 +86,23 @@ def write_wav(path: Path, samples: bytes) -> None:
         wf.writeframes(samples)
 
 
-async def collect_raw_samples(dut, num_cycles: int):
-    for _ in range(num_cycles):
-        await RisingEdge(dut.clk)
-        assert dut.uo_out.value.is_resolvable
-        yield int(dut.uo_out.value)
+async def collect_pwm(dut, num_samples: int):
+    for _ in range(num_samples):
+        frame = []
+        for _ in range(PWM_PERIOD):
+            await RisingEdge(dut.clk)
+            assert dut.uo_out.value.is_resolvable
+            frame.append(int(dut.uo_out.value))
+        yield frame
 
 
-async def collect_samples(dut, num_samples: int) -> list[list[int]]:
-    raw = [val async for val in collect_raw_samples(dut, num_samples * PWM_PERIOD)]
-    # count high cycles over each 256-clock period to recover the PWM duty cycle (8-bit PCM sample)
-    return [
-        [
-            sum((val >> ch) & 1 for val in raw[i : i + PWM_PERIOD])
+async def collect_sample(dut, num_samples: int):
+    async for frame in collect_pwm(dut, num_samples):
+        # count high cycles over each 256-clock period to recover the PWM duty cycle (8-bit PCM sample)
+        yield [
+            sum((val >> ch) & 1 for val in frame)
             for ch in range(len(FORMULAS))
         ]
-        for i in range(0, len(raw), PWM_PERIOD)
-    ]
 
 
 @cocotb.test()
@@ -120,14 +129,13 @@ async def test_bytebeat(dut):
     await ClockCycles(dut.clk, 1)
 
     num_samples = 16
-    samples = await collect_samples(dut, num_samples)
-
-    expected = [golden_sample(t, a, b, c, d) for t in range(num_samples)]
-    assert samples == expected, "\n" + "\n".join(
+    pwm = [frame async for frame in collect_pwm(dut, num_samples)]
+    expected = list(golden_pwm(num_samples, a, b, c, d))
+    assert pwm == expected, "\n" + "\n".join(
         list(
             difflib.unified_diff(
                 pprint.pformat(expected).splitlines(),
-                pprint.pformat(samples).splitlines(),
+                pprint.pformat(pwm).splitlines(),
                 fromfile="golden",
                 tofile=SIM_SUFFIX,
                 lineterm="",
@@ -155,9 +163,8 @@ async def test_wav(dut):
     await ClockCycles(dut.clk, 1)
 
     num_samples = int(os.environ.get("NUM_SAMPLES", str(8 * SAMPLE_RATE)))
-    samples = await collect_samples(dut, num_samples)
-
-    expected = [golden_sample(t, a, b, c, d) for t in range(num_samples)]
+    samples = [s async for s in collect_sample(dut, num_samples)]
+    expected = list(golden_sample(num_samples, a, b, c, d))
     out_dir = Path(__file__).resolve().parent / "output"
     for ch, fn in enumerate(FORMULAS):
         if fn is not silence:
