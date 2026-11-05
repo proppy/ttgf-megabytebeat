@@ -10,8 +10,7 @@ import wave
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, RisingEdge, ValueChange
-from cocotb.utils import get_sim_time
+from cocotb.triggers import ClockCycles, RisingEdge
 
 
 SAMPLE_RATE = 8000
@@ -78,6 +77,25 @@ def write_wav(path: Path, samples: bytes) -> None:
         wf.writeframes(samples)
 
 
+async def collect_raw_samples(dut, num_cycles: int):
+    for _ in range(num_cycles):
+        await RisingEdge(dut.clk)
+        assert dut.uo_out.value.is_resolvable
+        yield int(dut.uo_out.value)
+
+
+async def collect_samples(dut, num_samples: int) -> list[list[int]]:
+    raw = [val async for val in collect_raw_samples(dut, num_samples * PWM_PERIOD)]
+    # count high cycles over each 256-clock period to recover the PWM duty cycle (8-bit PCM sample)
+    return [
+        [
+            sum((val >> ch) & 1 for val in raw[i : i + PWM_PERIOD])
+            for ch in range(len(FORMULAS))
+        ]
+        for i in range(0, len(raw), PWM_PERIOD)
+    ]
+
+
 @cocotb.test()
 async def test_bytebeat(dut):
     dut._log.info("Start")
@@ -102,20 +120,7 @@ async def test_bytebeat(dut):
     await ClockCycles(dut.clk, 1)
 
     num_samples = 16
-    raw = []
-    for _ in range(num_samples * PWM_PERIOD):
-        await RisingEdge(dut.clk)
-        assert dut.uo_out.value.is_resolvable
-        raw.append(int(dut.uo_out.value))
-
-    # count high cycles over each 256-clock period to recover the PWM duty cycle (8-bit PCM sample)
-    samples = [
-        [
-            sum((val >> ch) & 1 for val in raw[i : i + PWM_PERIOD])
-            for ch in range(len(FORMULAS))
-        ]
-        for i in range(0, len(raw), PWM_PERIOD)
-    ]
+    samples = await collect_samples(dut, num_samples)
 
     expected = [golden_sample(t, a, b, c, d) for t in range(num_samples)]
     assert samples == expected, "\n" + "\n".join(
@@ -129,20 +134,6 @@ async def test_bytebeat(dut):
             )
         )[:32]
     )
-
-
-async def collect_pwm_events(dut, num_cycles: int):
-    edge0_ps = get_sim_time("ps")
-    yield (0, int(dut.uo_out.value))
-    while True:
-        await ValueChange(dut.uo_out)
-        if not dut.uo_out.value.is_resolvable:
-            continue
-        cycle = round((get_sim_time("ps") - edge0_ps) / PERIOD_PS)
-        if cycle >= num_cycles:
-            yield (num_cycles, 0)
-            break
-        yield (cycle, int(dut.uo_out.value))
 
 
 @cocotb.test()
@@ -164,15 +155,7 @@ async def test_wav(dut):
     await ClockCycles(dut.clk, 1)
 
     num_samples = int(os.environ.get("NUM_SAMPLES", str(8 * SAMPLE_RATE)))
-    events = [e async for e in collect_pwm_events(dut, num_samples * PWM_PERIOD)]
-
-    samples = [[0] * len(FORMULAS) for _ in range(num_samples)]
-    for (c0, val), (c1, _) in zip(events, events[1:]):
-        t = c0 // PWM_PERIOD
-        cycles = c1 - c0
-        for ch in range(len(FORMULAS)):
-            if (val >> ch) & 1:
-                samples[t][ch] += cycles
+    samples = await collect_samples(dut, num_samples)
 
     expected = [golden_sample(t, a, b, c, d) for t in range(num_samples)]
     out_dir = Path(__file__).resolve().parent / "output"
