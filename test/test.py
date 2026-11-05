@@ -97,7 +97,7 @@ async def test_bytebeat(dut):
     assert dut.uio_out.value == 0
 
     dut.rst_n.value = 1 # take out of reset
-    # advance to the first rising edge where rst_n == 1 is sampled (count == 0)
+    # advance to the first rising edge where rst_n == 1 is sampled (start of the first 256-clock PWM period)
     await ClockCycles(dut.clk, 1)
 
     num_samples = 16
@@ -135,13 +135,16 @@ async def test_wav(dut):
     cocotb.start_soon(clock.start())
 
     a, b, c, d = 0x5, 0x1, 0x3, 0x0
-    dut.ena.value = 1
-    dut.rst_n.value = 0
-    dut.ui_in.value = (b << 4) | a
-    dut.uio_in.value = (d << 4) | c
+    dut.ena.value = 1 # enable project
+    dut.rst_n.value = 0 # low to reset
+    # set "interesting" input parameters
+    dut.ui_in.value = (b << 4) | a   # 0x15: a=5 b=1
+    dut.uio_in.value = (d << 4) | c  # 0x03: c=3 d=0
+    # wait 3 cycles so rst_n propagates past t=0 and non-blocking/unit-delay assignments take effect
     await ClockCycles(dut.clk, 3)
 
-    dut.rst_n.value = 1
+    dut.rst_n.value = 1 # take out of reset
+    # advance to the first rising edge where rst_n == 1 is sampled (start of the first 256-clock PWM period)
     await ClockCycles(dut.clk, 1)
     edge0_ps = get_sim_time("ps")
 
