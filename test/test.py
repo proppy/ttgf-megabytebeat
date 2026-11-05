@@ -129,19 +129,18 @@ async def test_bytebeat(dut):
     await ClockCycles(dut.clk, 1)
 
     num_samples = 16
-    pwm = [frame async for frame in collect_pwm(dut, num_samples)]
-    expected = list(golden_pwm(num_samples, a, b, c, d))
-    assert pwm == expected, "\n" + "\n".join(
-        list(
+    expected = golden_pwm(num_samples, a, b, c, d)
+    async for frame in collect_pwm(dut, num_samples):
+        exp_frame = next(expected)
+        assert frame == exp_frame, "\n" + "\n".join(
             difflib.unified_diff(
-                pprint.pformat(expected).splitlines(),
-                pprint.pformat(pwm).splitlines(),
+                pprint.pformat(exp_frame).splitlines(),
+                pprint.pformat(frame).splitlines(),
                 fromfile="golden",
                 tofile=SIM_SUFFIX,
                 lineterm="",
             )
-        )[:32]
-    )
+        )
 
 
 @cocotb.test()
