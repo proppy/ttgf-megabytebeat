@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
       - name: Generate Verilog for bytebeat_the42melody
@@ -90,4 +90,4 @@ jobs:
 
 
       - name: Build docs
-        uses: TinyTapeout/tt-gds-action/docs@ttgf0p2
+        uses: TinyTapeout/tt-gds-action/docs@ttgf26c

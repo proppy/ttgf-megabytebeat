@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -90,6 +90,6 @@ jobs:
           artifact-name: xls-generated-sierpinskiharmony
 
       - name: FPGA bitstream for TT ASIC Sim (ICE40UP5K)
-        uses: TinyTapeout/tt-gds-action/fpga/ice40up5k@ttgf0p3
+        uses: TinyTapeout/tt-gds-action/fpga/ice40up5k@ttgf26c
         env:
           TT_FPGA_FREQ: 2
