@@ -162,7 +162,8 @@ async def test_wav(dut):
     # advance to the first rising edge where rst_n == 1 is sampled (start of the first 256-clock PWM period)
     await ClockCycles(dut.clk, 1)
 
-    num_samples = int(os.environ.get("NUM_SAMPLES", str(8 * SAMPLE_RATE)))
+    default_samples = 256 if os.environ.get("GATES") == "yes" else 8 * SAMPLE_RATE
+    num_samples = int(os.environ.get("NUM_SAMPLES", str(default_samples)))
     samples = [s async for s in collect_sample(dut, num_samples)]
     expected = list(golden_sample(num_samples, a, b, c, d))
     out_dir = Path(__file__).resolve().parent / "output"
