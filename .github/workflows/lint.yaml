@@ -1,0 +1,22 @@
+name: lint
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pep8:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Lint & format check (PEP 8 via ruff)
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "check"
+
+      - name: Format check (ruff)
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "format --check"
