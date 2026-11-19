@@ -1,0 +1,48 @@
+name: sim
+
+on:
+  push:
+    paths:
+      - "chip/**"
+      - "src/**"
+      - ".github/workflows/sim.yaml"
+  pull_request:
+    paths:
+      - "chip/**"
+      - "src/**"
+      - ".github/workflows/sim.yaml"
+  workflow_dispatch:
+
+jobs:
+  sim:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: chip
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install EDA & simulation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y klayout ngspice verilator iverilog
+
+      - name: Setup GF180MCU PDK
+        uses: TinyTapeout/ciel-action@v1
+        with:
+          pdk_name: gf180mcuD
+          pdk_version: 0fe599b2afb6708d281543108caf8310912f54af
+          pdk_root: ${{ runner.temp }}/pdk
+
+      - name: Setup uv & Python 3.12
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Verify R-2R DAC cell (DRC, LVS, Liberty, 256-code multi-corner ngspice)
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+        run: uv run python dac.py --bits 8 --check
