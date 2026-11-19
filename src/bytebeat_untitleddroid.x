@@ -1,7 +1,7 @@
 // Copyright 2025 Google LLC.
 // SPDX-License-Identifier: Apache-2.0
 
-fn untitleddroid(t: u32, a: u4, b: u4, c: u4, d: u4) -> u8 {
+pub fn untitleddroid(t: u32, a: u4, b: u4, c: u4, d: u4) -> u8 {
     let cond0 = t>>(a as u32)&(b as u32);
     let p0 = t>>(c as u32);
     let p1 = ((!t)+u32:1)>>(d as u32);

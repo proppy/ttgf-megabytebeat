@@ -1,7 +1,7 @@
 // Copyright 2025 Google LLC.
 // SPDX-License-Identifier: Apache-2.0
 
-fn fractaltrees(t: u32, a: u4, b: u4, c: u4, d: u4) -> u8 {
+pub fn fractaltrees(t: u32, a: u4, b: u4, c: u4, d: u4) -> u8 {
    let ab = (b++a) as u32;
    let ab = if ab == u32:0 { u32:1 } else { ab };
    let cd = (d++c) as u32;
