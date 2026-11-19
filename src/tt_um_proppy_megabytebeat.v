@@ -32,12 +32,12 @@ module tt_um_proppy_megabytebeat (
    megabytebeat u_megabytebeat (
       .clk(clk),
       .reset(rst),
-      .megabytebeat__params_r(packed_params),
-      .megabytebeat__params_r_vld(1'b1),
-      .megabytebeat__params_r_rdy(params_rdy),
-      .megabytebeat__pcm_s(pcm_bus),
-      .megabytebeat__pcm_s_vld(pcm_vld),
-      .megabytebeat__pcm_s_rdy(sample_rdy)
+      ._params_r(packed_params),
+      ._params_r_vld(1'b1),
+      ._params_r_rdy(params_rdy),
+      ._pcm_s(pcm_bus),
+      ._pcm_s_vld(pcm_vld),
+      ._pcm_s_rdy(sample_rdy)
    );
 
    assign pcm[0] = pcm_bus[7:0];

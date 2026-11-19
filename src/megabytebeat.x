@@ -2,56 +2,70 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Unified Multi-Track Bytebeat Synthesizer Proc.
-// Imports the 5 canonical bytebeat formulas from src/bytebeat_*.x, evaluates them
-// concurrently with a single shared t: u32 counter (enabling XLS cross-track CSE),
-// and uses blocking recv(params_r) backpressure as the sample strobe.
+// Evaluates all 5 canonical bytebeat formulas from src/bytebeat.x concurrently
+// with a single shared t: u32 counter (enabling XLS cross-track CSE), using
+// blocking recv(params_r) backpressure as the sample strobe.
 
-import bytebeat_atunetoshare;
-import bytebeat_fractaltrees;
-import bytebeat_sierpinskiharmony;
-import bytebeat_the42melody;
-import bytebeat_untitleddroid;
+#![feature(explicit_state_access)]
 
-pub fn megabytebeat_eval(t: u32, packed_params: u16) -> u8[5] {
-    let a = (packed_params >> u16:0) as u4;
-    let b = (packed_params >> u16:4) as u4;
-    let c = (packed_params >> u16:8) as u4;
-    let d = (packed_params >> u16:12) as u4;
-    u8[5]:[
-        bytebeat_the42melody::the42melody(t, a, b, c, d),
-        bytebeat_fractaltrees::fractaltrees(t, a, b, c, d),
-        bytebeat_untitleddroid::untitleddroid(t, a, b, c, d),
-        bytebeat_atunetoshare::atunetoshare(t, a, b, c, d),
-        bytebeat_sierpinskiharmony::sierpinskiharmony(t, a, b, c, d),
-    ]
-}
+import bytebeat;
 
 pub proc megabytebeat {
-    params_r: chan<u16> in;
-    pcm_s: chan<u8[5]> out;
+    params_r: chan<u16> in,
+    pcm_s: chan<u8[5]> out,
+    t: u32,
+}
 
-    init { u32:0 }
+impl megabytebeat {
+    pub fn eval(t: u32, packed_params: u16) -> u8[5] {
+        let a = packed_params[0:4];
+        let b = packed_params[4:8];
+        let c = packed_params[8:12];
+        let d = packed_params[12:16];
+        u8[5]:[
+            bytebeat::the42melody(t, a, b, c, d), bytebeat::fractaltrees(t, a, b, c, d),
+            bytebeat::untitleddroid(t, a, b, c, d), bytebeat::atunetoshare(t, a, b, c, d),
+            bytebeat::sierpinskiharmony(t, a, b, c, d),
+        ]
+    }
 
-    config(params_r: chan<u16> in, pcm_s: chan<u8[5]> out) { (params_r, pcm_s) }
+    pub fn new(params_r: chan<u16> in, pcm_s: chan<u8[5]> out) -> Self {
+        Self { params_r, pcm_s, t: u32:0 }
+    }
 
-    next(t: u32) {
-        let tok = token();
-        let (tok, params) = recv(tok, params_r);
-        let pcm = megabytebeat_eval(t, params);
-        send(tok, pcm_s, pcm);
-        t + u32:1
+    fn next(self) {
+        let t = read(self.t);
+        let (tok, params) = recv(join(), self.params_r);
+        let pcm = Self::eval(t, params);
+        send(tok, self.pcm_s, pcm);
+        write(self.t, t + u32:1);
     }
 }
 
 #[test]
-fn megabytebeat_eval_test() {
-    let params = u16:0x0a2a;  // a=0xa, b=0x2, c=0xa, d=0x0
-    let out0 = megabytebeat_eval(u32:0, params);
-    assert_eq(out0[0], u8:0);
-    let out1 = megabytebeat_eval(u32:2048, params);
-    assert_eq(out1[0], bytebeat_the42melody::the42melody(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
-    assert_eq(out1[1], bytebeat_fractaltrees::fractaltrees(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
-    assert_eq(out1[2], bytebeat_untitleddroid::untitleddroid(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
-    assert_eq(out1[3], bytebeat_atunetoshare::atunetoshare(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
-    assert_eq(out1[4], bytebeat_sierpinskiharmony::sierpinskiharmony(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
+proc megabytebeat_test {
+    terminator: chan<bool> out,
+    params_s: chan<u16> out,
+    pcm_r: chan<u8[5]> in,
+}
+
+impl megabytebeat_test {
+    fn new(terminator: chan<bool> out) -> Self {
+        let (params_s, params_r) = chan<u16>("params");
+        let (pcm_s, pcm_r) = chan<u8[5]>("pcm");
+        megabytebeat::new(params_r, pcm_s).spawn();
+        Self { terminator, params_s, pcm_r }
+    }
+
+    fn next(self) {
+        // Sweep across default and updated parameter packs to verify t state + live params.
+        let tok = for (i, tok): (u32, token) in u32:0..u32:32 {
+            let params = if i < u32:16 { u16:0x0a2a } else { u16:0xa375 };
+            let tok = send(tok, self.params_s, params);
+            let (tok, got) = recv(tok, self.pcm_r);
+            assert_eq(got, megabytebeat::eval(i, params));
+            tok
+        }(join());
+        send(tok, self.terminator, true);
+    }
 }

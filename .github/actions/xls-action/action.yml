@@ -61,7 +61,7 @@ runs:
       shell: bash
     - name: test DSLX
       run: |
-        interpreter_main --dslx_path=src ${{ inputs.dslx-path }}
+        interpreter_main --compare=jit --dslx_path=src ${{ inputs.dslx-path }}
       shell: bash
     - name: convert DSLX to XLS ir
       run: |
