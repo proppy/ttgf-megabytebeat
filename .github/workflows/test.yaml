@@ -119,7 +119,6 @@ jobs:
         with:
           name: test-results
           path: |
-            test/tb.vcd
             test/tb.fst
             test/results.xml
             test/output/*
