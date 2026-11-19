@@ -48,3 +48,6 @@ jobs:
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
         run: uv run python src/adc.py --channels 4 --bits 4 --check
+
+      - name: Verify Bresenham BPM / tap-tempo sync block (XLS JIT)
+        run: uv run python src/bpm.py --step-samples 1024 --check
