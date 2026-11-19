@@ -3,7 +3,7 @@
 
 # defaults
 SIM ?= icarus
-WAVES ?= 1
+FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
 PROJECT_SOURCES = tt_um_proppy_megabytebeat.v pwm_audio.v bytebeat_the42melody.v bytebeat_fractaltrees.v bytebeat_untitleddroid.v bytebeat_atunetoshare.v bytebeat_sierpinskiharmony.v
