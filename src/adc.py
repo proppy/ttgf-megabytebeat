@@ -276,24 +276,34 @@ def _check_adc_xls(dslx_path: Path, ir: str) -> None:
     )
 
 
-def _check_adc_ngspice(cir_path: Path, cell_name: str, bits: int, out_dir: Path) -> None:
+def _run_adc_dc(
+    subckt_path: Path, cell_name: str, nsteps: int, corner: str, rcorner: str, sim_dir: Path
+) -> list[float]:
+    sim_dir.mkdir(parents=True, exist_ok=True)
+    wrapped = sim_dir / f"{cell_name}_ngspice.cir"
+    wrapped.write_text(analog.ngspice_subckt_wrapper(subckt_path, cell_name, ADC_CANONICAL_PINS))
+    (sim_dir / "env.spice").write_text(analog.ngspice_env(corner, rcorner, includes=[wrapped]))
+    out = subprocess.check_output(
+        ["ngspice", "-b", str(SRC_DIR / "adc_ramp.spice")],
+        cwd=sim_dir,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    return [
+        float(re.search(rf"^vtrip_{s}\s*=\s*([0-9.eE+-]+)", out, re.M).group(1))
+        for s in range(nsteps)
+    ]
+
+
+def _check_adc_ngspice(
+    spice_path: Path, cir_path: Path, cell_name: str, bits: int, out_dir: Path
+) -> None:
     nsteps = (1 << bits) - 1
-    wrapped_cir = out_dir / f"{cell_name}_ngspice.cir"
-    wrapped_cir.write_text(analog.ngspice_subckt_wrapper(cir_path, cell_name, ADC_CANONICAL_PINS))
+    typ_extracted: list[float] | None = None
     for corner, rcorner in [("typical", "res_typical"), ("ff", "res_ff"), ("ss", "res_ss")]:
-        cdir = out_dir / f"sim_{corner}"
-        cdir.mkdir(parents=True, exist_ok=True)
-        (cdir / "env.spice").write_text(analog.ngspice_env(corner, rcorner, includes=[wrapped_cir]))
-        out = subprocess.check_output(
-            ["ngspice", "-b", str(SRC_DIR / "adc_ramp.spice")],
-            cwd=cdir,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        trips = [
-            float(re.search(rf"^vtrip_{s}\s*=\s*([0-9.eE+-]+)", out, re.M).group(1))
-            for s in range(nsteps)
-        ]
+        trips = _run_adc_dc(cir_path, cell_name, nsteps, corner, rcorner, out_dir / f"sim_{corner}")
+        if corner == "typical":
+            typ_extracted = trips
         alsb = (trips[-1] - trips[0]) / (nsteps - 1)
         adnls = [(trips[s + 1] - trips[s]) / alsb - 1.0 for s in range(nsteps - 1)]
         ainls = [(trips[s] - (trips[0] + s * alsb)) / alsb for s in range(nsteps)]
@@ -308,6 +318,20 @@ def _check_adc_ngspice(cir_path: Path, cell_name: str, bits: int, out_dir: Path)
             f"Vtrip={trips[0]:.3f}V..{trips[-1]:.3f}V, max|DNL|={max(map(abs, adnls)):.4f} LSB, "
             f"max|INL|={max(map(abs, ainls)):.4f} LSB"
         )
+
+    assert typ_extracted is not None
+    typ_inferred = _run_adc_dc(
+        spice_path, cell_name, nsteps, "typical", "res_typical", out_dir / "sim_inferred_typical"
+    )
+    alsb = (typ_extracted[-1] - typ_extracted[0]) / (nsteps - 1)
+    max_delta_lsb = max(abs(a - b) / alsb for a, b in zip(typ_inferred, typ_extracted))
+    assert max_delta_lsb < 0.1, (
+        f"ADC inferred vs extracted mismatch: {max_delta_lsb:.4f} LSB >= 0.1 LSB"
+    )
+    print(
+        f"  [ADC check | inf/ext] {nsteps}-step inferred vs KLayout-extracted OK: "
+        f"max|dV|={max_delta_lsb * alsb * 1e3:.3f} mV ({max_delta_lsb:.4f} LSB)"
+    )
 
 
 def build_adc(
@@ -366,7 +390,7 @@ def check_adc(adc: Adc, gds: Path, lef: Path, spice: Path, out_dir: Path) -> Non
     cir = analog.run_klayout_lvs(
         gds, spice, out_dir / "lvs_unmerged", adc.cell_name, ["--top_lvl_pins", "--net_only"]
     )
-    _check_adc_ngspice(cir, adc.cell_name, adc.bits, out_dir)
+    _check_adc_ngspice(spice, cir, adc.cell_name, adc.bits, out_dir)
 
 
 def main() -> None:
