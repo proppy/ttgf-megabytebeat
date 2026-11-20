@@ -1,9 +1,15 @@
 .DS_Store
 .idea
+.venv/
+__pycache__/
+*.pyc
 *.vcd
 *.fst
 *.fst.hier
 runs
+gen/
+gen_tt/
+results.xml
 tt_submission
 src/user_config.json
 src/config_merged.json

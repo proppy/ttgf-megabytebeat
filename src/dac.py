@@ -2,7 +2,7 @@
 """R-2R DAC sub-block: gdsfactory layout, collateral emission, DRC/LVS & ngspice check.
 
 Checked-in static views live under `src/sc_r2r_dac_8bit.{lib,v}` and `src/dac_dc.spice`.
-Can be run standalone (`python chip/dac.py --check`) or imported by `chip/chip.py`.
+Can be run standalone (`python src/dac.py --check`) or imported by `src/chip.py`.
 """
 
 from __future__ import annotations
@@ -15,33 +15,15 @@ import subprocess
 import gdsfactory as gf
 from gf180mcu.layers import LAYER
 
-from r2r import (
-    ROW_H,
-    Y_M2_SPINE,
-    Y_RES,
-    add_signal_pin,
-    check_liberty_and_lef,
-    export_lef,
-    infer_spice_from_component,
-    m1_hbar,
-    m1_strap_y,
-    m2_bridge,
-    r2r_res_bay,
-    run_klayout_drc,
-    run_klayout_lvs,
-    std_cell,
-    surround_with_neighbors,
-    write_ngspice_env,
-    write_ngspice_subckt_wrapper,
-)
+import analog
 
-BASE_DIR = Path(__file__).resolve().parent
-SRC_DIR = BASE_DIR.parent / "src"
+SRC_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SRC_DIR.parent
 DAC_CANONICAL_PINS = ["VDD", "VSS", *[f"d[{b}]" for b in range(7, -1, -1)], "out"]
 
 
 @dataclass
-class DacCollateral:
+class Dac:
     cell_name: str
     bits: int
     width_um: float
@@ -59,9 +41,9 @@ def build_dac_cell(
 ) -> gf.Component:
     """Build 1-row (3.92um) CLASS CORE N-bit R_on-compensated R-2R DAC cell."""
     c = gf.Component()
-    tiel = std_cell("tiel")
-    drv = std_cell(driver)
-    tie = std_cell("filltie")
+    tiel = analog.std_cell("tiel")
+    drv = analog.std_cell(driver)
+    tie = analog.std_cell("filltie")
     drv_w = float(drv.info["width"])
     y_drv = round(drv.ports["Z"].dy, 3)
 
@@ -74,7 +56,7 @@ def build_dac_cell(
     r_cbt = c.add_ref(drv)
     r_cbt.dmove((x, 0))
     x = round(x + drv_w, 3)
-    m2_bridge(
+    analog.m2_bridge(
         c,
         r_tl.ports["ZN"].dx,
         r_tl.ports["ZN"].dy,
@@ -83,16 +65,16 @@ def build_dac_cell(
         y_route=0.84,
     )
 
-    bay_term = r2r_res_bay((l_2r, l_2r))
+    bay_term = analog.r2r_res_bay((l_2r, l_2r))
     r_bt = c.add_ref(bay_term)
     r_bt.dmove((x, 0))
     x = round(x + bay_term.info["width"], 3)
     f0_r0, f0_r1 = r_bt.ports["f0_r0"].dx, r_bt.ports["f0_r1"].dx
     f1_r0, n_prev_x = r_bt.ports["f1_r0"].dx, r_bt.ports["f1_r1"].dx
-    m1_strap_y(c, f0_r0, Y_RES, y_drv)
-    m2_bridge(c, r_cbt.ports["Z"].dx, y_drv, f0_r0, y_drv, y_route=y_drv)
-    m1_hbar(c, f0_r1, f1_r0, Y_RES)
-    m1_strap_y(c, n_prev_x, Y_RES, Y_M2_SPINE)
+    analog.m1_strap_y(c, f0_r0, analog.Y_RES, y_drv)
+    analog.m2_bridge(c, r_cbt.ports["Z"].dx, y_drv, f0_r0, y_drv, y_route=y_drv)
+    analog.m1_hbar(c, f0_r1, f1_r0, analog.Y_RES)
+    analog.m1_strap_y(c, n_prev_x, analog.Y_RES, analog.Y_M2_SPINE)
 
     for b in range(bits):
         c.add_ref(tie).dmove((x, 0))
@@ -101,7 +83,7 @@ def build_dac_cell(
         rcb = c.add_ref(drv)
         rcb.dmove((x, 0))
         x = round(x + drv_w, 3)
-        add_signal_pin(
+        analog.add_signal_pin(
             c,
             f"d[{b}]",
             "INPUT",
@@ -113,27 +95,27 @@ def build_dac_cell(
         )
 
         lengths = (l_2r, l_2r, l_1r) if b + 1 < bits else (l_2r, l_2r)
-        bay = r2r_res_bay(lengths)
+        bay = analog.r2r_res_bay(lengths)
         rb = c.add_ref(bay)
         rb.dmove((x, 0))
         x = round(x + bay.info["width"], 3)
         p0_0, p0_1 = rb.ports["f0_r0"].dx, rb.ports["f0_r1"].dx
         p1_0, p1_1 = rb.ports["f1_r0"].dx, rb.ports["f1_r1"].dx
 
-        m1_strap_y(c, p0_0, Y_RES, y_drv)
-        m2_bridge(c, rcb.ports["Z"].dx, y_drv, p0_0, y_drv, y_route=y_drv)
-        m1_hbar(c, p0_1, p1_0, Y_RES)
-        m1_strap_y(c, p1_1, Y_RES, Y_M2_SPINE)
-        m2_bridge(c, n_prev_x, Y_M2_SPINE, p1_1, Y_M2_SPINE)
+        analog.m1_strap_y(c, p0_0, analog.Y_RES, y_drv)
+        analog.m2_bridge(c, rcb.ports["Z"].dx, y_drv, p0_0, y_drv, y_route=y_drv)
+        analog.m1_hbar(c, p0_1, p1_0, analog.Y_RES)
+        analog.m1_strap_y(c, p1_1, analog.Y_RES, analog.Y_M2_SPINE)
+        analog.m2_bridge(c, n_prev_x, analog.Y_M2_SPINE, p1_1, analog.Y_M2_SPINE)
 
         if b + 1 < bits:
             p2_0, p2_1 = rb.ports["f2_r0"].dx, rb.ports["f2_r1"].dx
-            m1_hbar(c, p1_1, p2_0, Y_RES)
-            m1_strap_y(c, p2_1, Y_RES, Y_M2_SPINE)
+            analog.m1_hbar(c, p1_1, p2_0, analog.Y_RES)
+            analog.m1_strap_y(c, p2_1, analog.Y_RES, analog.Y_M2_SPINE)
             n_prev_x = p2_1
         else:
-            m1_strap_y(c, p1_1, Y_RES, 2.75)
-            add_signal_pin(
+            analog.m1_strap_y(c, p1_1, analog.Y_RES, 2.75)
+            analog.add_signal_pin(
                 c,
                 "out",
                 "OUTPUT",
@@ -154,13 +136,12 @@ def build_dac_cell(
 
 def _check_dac_ngspice(cir_path: Path, cell_name: str, bits: int, out_dir: Path) -> None:
     ncodes = 1 << bits
-    wrapped_cir = write_ngspice_subckt_wrapper(
-        cir_path, cell_name, DAC_CANONICAL_PINS, out_dir / f"{cell_name}_ngspice.cir"
-    )
+    wrapped_cir = out_dir / f"{cell_name}_ngspice.cir"
+    wrapped_cir.write_text(analog.ngspice_subckt_wrapper(cir_path, cell_name, DAC_CANONICAL_PINS))
     for corner, rcorner in [("typical", "res_typical"), ("ff", "res_ff"), ("ss", "res_ss")]:
         cdir = out_dir / f"sim_{corner}"
         cdir.mkdir(parents=True, exist_ok=True)
-        write_ngspice_env(cdir / "env.spice", corner, rcorner, includes=[wrapped_cir])
+        (cdir / "env.spice").write_text(analog.ngspice_env(corner, rcorner, includes=[wrapped_cir]))
         subprocess.run(
             ["ngspice", "-b", str(SRC_DIR / "dac_dc.spice")],
             cwd=cdir,
@@ -191,16 +172,16 @@ def build_dac(
     driver: str = "clkbuf_12",
     l_1r: float = 10.00,
     l_2r: float = 9.81,
-    out_dir: Path = BASE_DIR / "gen/dac",
+    out_dir: Path = REPO_ROOT / "gen/dac",
     check: bool = False,
-) -> DacCollateral:
+) -> Dac:
     if bits != 8:
         raise ValueError("Checked-in src/sc_r2r_dac_8bit.{lib,v} targets 8-bit DAC.")
     out_dir.mkdir(parents=True, exist_ok=True)
     cell_name = "sc_r2r_dac_8bit"
     cell = build_dac_cell(bits=bits, driver=driver, l_1r=l_1r, l_2r=l_2r)
     w = float(cell.info["width"])
-    area = w * ROW_H
+    area = w * analog.ROW_H
 
     named = gf.Component(cell_name)
     named.add_ref(cell)
@@ -218,22 +199,21 @@ def build_dac(
     verilog = SRC_DIR / f"{cell_name}.v"
 
     named.write_gds(gds)
-    export_lef(named, cell_name, lef)
-    infer_spice_from_component(cell, cell_name, spice)
-    print(f"[dac] Emitted {cell_name}: {w:.2f} x {ROW_H} um ({area:.1f} um^2) -> {out_dir}")
+    lef.write_text(analog.export_lef(named, cell_name))
+    spice.write_text(analog.infer_spice(cell, cell_name))
 
     if check:
-        check_liberty_and_lef(lef, lib, cell_name, expected_area=area)
+        analog.check_liberty_and_lef(lef, lib, cell_name, expected_area=area)
         print("  [DAC check] OpenROAD readLef + readLiberty & area match OK.")
         abut_gds = out_dir / f"{cell_name}_abutted.gds"
-        surround_with_neighbors(named).write_gds(abut_gds)
-        run_klayout_drc(abut_gds, out_dir / "drc")
+        analog.surround_with_neighbors(named).write_gds(abut_gds)
+        analog.run_klayout_drc(abut_gds, out_dir / "drc")
         print("  [DAC check] KLayout DRC (4-sided abutted) clean.")
-        cir = run_klayout_lvs(gds, spice, out_dir / "lvs", cell_name, ["--top_lvl_pins"])
+        cir = analog.run_klayout_lvs(gds, spice, out_dir / "lvs", cell_name, ["--top_lvl_pins"])
         print("  [DAC check] KLayout LVS (Component.get_netlist() vs GDS) matched.")
         _check_dac_ngspice(cir, cell_name, bits, out_dir)
 
-    return DacCollateral(
+    return Dac(
         cell_name=cell_name,
         bits=bits,
         width_um=w,
@@ -252,7 +232,7 @@ if __name__ == "__main__":
     ap.add_argument("--driver", default="clkbuf_12")
     ap.add_argument("--l-1r", type=float, default=10.00)
     ap.add_argument("--l-2r", type=float, default=9.81)
-    ap.add_argument("--out-dir", type=Path, default=BASE_DIR / "gen/dac")
+    ap.add_argument("--out-dir", type=Path, default=REPO_ROOT / "gen/dac")
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args()
-    build_dac(args.bits, args.driver, args.l_1r, args.l_2r, args.out_dir, args.check)
+    print(build_dac(args.bits, args.driver, args.l_1r, args.l_2r, args.out_dir, args.check))

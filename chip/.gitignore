@@ -1,8 +1,0 @@
-.venv/
-__pycache__/
-*.pyc
-gen/
-gen_tt/
-results.xml
-*.vcd
-*.fst

@@ -1,12 +1,14 @@
-"""Shared parametric gdsfactory (gf180mcu) R-2R layout & verification helpers."""
+"""GF180MCU gdsfactory analog layout, collateral export, DRC/LVS, and ngspice helpers."""
 
 from __future__ import annotations
-from pathlib import Path
+
 import math
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
+
 import gdsfactory as gf
 from gdsfactory.get_netlist import PortCenterMatcher
 import gf180mcu  # noqa: F401 - activates gf180mcu PDK
@@ -14,14 +16,18 @@ from gf180mcu.layers import LAYER
 import klayout.db as pya
 
 PDK_ROOT = Path(os.environ.get("PDK_ROOT", "/home/exedev/workspace/pdk"))
-SC_GDS = PDK_ROOT / "gf180mcuD/libs.ref/gf180mcu_fd_sc_mcu7t5v0/gds/gf180mcu_fd_sc_mcu7t5v0.gds"
-SC_CDL = PDK_ROOT / "gf180mcuD/libs.ref/gf180mcu_fd_sc_mcu7t5v0/cdl/gf180mcu_fd_sc_mcu7t5v0.cdl"
-SC_SPICE = (
-    PDK_ROOT / "gf180mcuD/libs.ref/gf180mcu_fd_sc_mcu7t5v0/spice/gf180mcu_fd_sc_mcu7t5v0.spice"
-)
-DRC_SCRIPT = PDK_ROOT / "gf180mcuD/libs.tech/klayout/drc/run_drc.py"
-LVS_SCRIPT = PDK_ROOT / "gf180mcuD/libs.tech/klayout/lvs/run_lvs.py"
-NG_MODELS = PDK_ROOT / "gf180mcuD/libs.tech/ngspice"
+GF180_DIR = PDK_ROOT / "gf180mcuD"
+SC_DIR = GF180_DIR / "libs.ref/gf180mcu_fd_sc_mcu7t5v0"
+SC_GDS = SC_DIR / "gds/gf180mcu_fd_sc_mcu7t5v0.gds"
+SC_CDL = SC_DIR / "cdl/gf180mcu_fd_sc_mcu7t5v0.cdl"
+SC_SPICE = SC_DIR / "spice/gf180mcu_fd_sc_mcu7t5v0.spice"
+SC_TLEF = SC_DIR / "techlef/gf180mcu_fd_sc_mcu7t5v0__nom.tlef"
+SC_LEF = SC_DIR / "lef/gf180mcu_fd_sc_mcu7t5v0.lef"
+SC_LIB = SC_DIR / "lib/gf180mcu_fd_sc_mcu7t5v0__tt_025C_5v00.lib"
+IO_SPICE = GF180_DIR / "libs.ref/gf180mcu_fd_io/spice/gf180mcu_fd_io.spice"
+DRC_SCRIPT = GF180_DIR / "libs.tech/klayout/drc/run_drc.py"
+LVS_SCRIPT = GF180_DIR / "libs.tech/klayout/lvs/run_lvs.py"
+NG_MODELS = GF180_DIR / "libs.tech/ngspice"
 
 SITE_W = 0.56
 ROW_H = 3.92
@@ -62,7 +68,6 @@ def std_cell(name: str) -> gf.Component:
         li = ly.find_layer(*lp)
         if li is not None:
             out.kdb_cell.shapes(li).clear()
-    # Store PR boundary width in sites * 0.56
     li_pr = ly.find_layer(0, 0)
     out.info["width"] = round(out.kdb_cell.bbox_per_layer(li_pr).width() * ly.dbu, 3)
     return out
@@ -374,8 +379,8 @@ def extract_cdl_subckts(names: list[str]) -> str:
     return "\n\n".join(blocks)
 
 
-def infer_spice_from_component(c: gf.Component, subckt_name: str, spice_path: Path) -> None:
-    """Infer LVS reference SPICE directly from gdsfactory Component.get_netlist()."""
+def infer_spice(c: gf.Component, subckt_name: str) -> str:
+    """Return LVS reference SPICE netlist inferred from gdsfactory Component.get_netlist()."""
     nl = c.get_netlist(
         recursive=True,
         on_multi_connect="ignore",
@@ -445,7 +450,8 @@ def infer_spice_from_component(c: gf.Component, subckt_name: str, spice_path: Pa
         if kind == "hres":
             w, res_l = settings.get("w", 1.0), settings.get("length", 10.0)
             lines.append(
-                f"RR_{idx} {net_name(path + ',r0')} {net_name(path + ',r1')} VSS ppolyf_u_1k_6p0 W={w}e-6 L={res_l}e-6"
+                f"RR_{idx} {net_name(path + ',r0')} {net_name(path + ',r1')} VSS "
+                f"ppolyf_u_1k_6p0 W={w}e-6 L={res_l}e-6"
             )
         elif kind.startswith("sc:"):
             sc = kind.split(":")[1]
@@ -459,18 +465,20 @@ def infer_spice_from_component(c: gf.Component, subckt_name: str, spice_path: Pa
                 )
             elif sc.startswith("clkinv"):
                 lines.append(
-                    f"X_{idx} {net_name(path + ',I')} {net_name(path + ',ZN')} VDD VDD VSS VSS gf180mcu_fd_sc_mcu7t5v0__{sc}"
+                    f"X_{idx} {net_name(path + ',I')} {net_name(path + ',ZN')} "
+                    f"VDD VDD VSS VSS gf180mcu_fd_sc_mcu7t5v0__{sc}"
                 )
             elif sc.startswith("clkbuf"):
                 lines.append(
-                    f"X_{idx} {net_name(path + ',I')} {net_name(path + ',Z')} VDD VDD VSS VSS gf180mcu_fd_sc_mcu7t5v0__{sc}"
+                    f"X_{idx} {net_name(path + ',I')} {net_name(path + ',Z')} "
+                    f"VDD VDD VSS VSS gf180mcu_fd_sc_mcu7t5v0__{sc}"
                 )
     lines += [f".ENDS {subckt_name}", ""]
-    spice_path.write_text("\n".join(lines))
+    return "\n".join(lines)
 
 
-def export_lef(c: gf.Component, cell_name: str, lef_path: Path) -> None:
-    """Export OpenROAD CLASS CORE ; SITE GF018hv5v_mcu_sc7 LEF abstract."""
+def export_lef(c: gf.Component, cell_name: str) -> str:
+    """Return OpenROAD CLASS CORE ; SITE GF018hv5v_mcu_sc7 LEF abstract text."""
     total_w = float(c.info["width"])
     ly = c.kcl.layout
     dbu = ly.dbu
@@ -568,10 +576,11 @@ def export_lef(c: gf.Component, cell_name: str, lef_path: Path) -> None:
                         f"        RECT {b.left:.3f} {b.bottom:.3f} {b.right:.3f} {b.top:.3f} ;"
                     )
     lines += ["  END", f"END {cell_name}", "END LIBRARY", ""]
-    lef_path.write_text("\n".join(lines))
+    return "\n".join(lines)
 
 
 def surround_with_neighbors(cell: gf.Component) -> gf.Component:
+    """Surround a 1-row CLASS CORE cell on all 4 sides with standard cells for abutted DRC."""
     total_w = float(cell.info["width"])
     top = gf.Component(f"{cell.name}_abutted")
     top.add_ref(cell)
@@ -661,9 +670,7 @@ def klayout_cir_to_ngspice(cir_path: Path) -> tuple[list[str], str]:
     return pins, conv
 
 
-def write_ngspice_subckt_wrapper(
-    src_path: Path, cell_name: str, canonical_pins: list[str], out_path: Path
-) -> Path:
+def ngspice_subckt_wrapper(src_path: Path, cell_name: str, canonical_pins: list[str]) -> str:
     """Convert KLayout .cir or LVS .spice to ngspice sm141064 syntax with fixed canonical pin order."""
     raw = src_path.read_text()
     if src_path.suffix == ".cir":
@@ -679,35 +686,27 @@ def write_ngspice_subckt_wrapper(
             flags=re.M,
         )
     assert set(pins) == set(canonical_pins), (
-        f"Subckt pin mismatch for {cell_name}: extracted={sorted(pins)} vs expected={sorted(canonical_pins)}"
+        f"Subckt pin mismatch for {cell_name}: "
+        f"extracted={sorted(pins)} vs expected={sorted(canonical_pins)}"
     )
     raw_name = f"{cell_name}_raw"
-    conv = re.sub(
-        r"^(\.SUBCKT\s+)\S+",
-        rf"\g<1>{raw_name}",
-        conv,
-        count=1,
-        flags=re.M,
-    )
+    conv = re.sub(r"^(\.SUBCKT\s+)\S+", rf"\g<1>{raw_name}", conv, count=1, flags=re.M)
     conv = re.sub(r"^(\.ENDS)(?:\s+\S+)?$", rf"\g<1> {raw_name}", conv, flags=re.M)
-    wrapper = (
+    return (
         f"{conv}\n\n"
         f".SUBCKT {cell_name} {' '.join(canonical_pins)}\n"
         f"XRAW {' '.join(pins)} {raw_name}\n"
         f".ENDS {cell_name}\n"
     )
-    out_path.write_text(wrapper)
-    return out_path
 
 
-def write_ngspice_env(
-    out_path: Path,
+def ngspice_env(
     corner: str = "typical",
     rcorner: str = "res_typical",
     includes: list[Path] | None = None,
     extra_libs: list[str] | None = None,
-) -> Path:
-    """Emit minimal PDK corner + subcircuit .include header for static .spice testbenches."""
+) -> str:
+    """Return minimal PDK corner + subcircuit .include header for static .spice testbenches."""
     lines = [
         f".include {NG_MODELS}/design.ngspice",
         f".lib {NG_MODELS}/sm141064.ngspice {corner}",
@@ -716,8 +715,7 @@ def write_ngspice_env(
         f".include {SC_SPICE}",
         *[f".include {p.resolve()}" for p in (includes or [])],
     ]
-    out_path.write_text("\n".join(lines) + "\n")
-    return out_path
+    return "\n".join(lines) + "\n"
 
 
 def check_liberty_and_lef(
@@ -726,12 +724,8 @@ def check_liberty_and_lef(
     """Validate LEF + Liberty in OpenROAD/OpenSTA and verify Liberty area matches layout."""
     import openroad
 
-    tlef = (
-        PDK_ROOT
-        / "gf180mcuD/libs.ref/gf180mcu_fd_sc_mcu7t5v0/techlef/gf180mcu_fd_sc_mcu7t5v0__nom.tlef"
-    )
     t = openroad.Tech()
-    t.readLef(str(tlef))
+    t.readLef(str(SC_TLEF))
     t.readLef(str(lef_path))
     t.readLiberty(str(lib_path))
     m = re.search(r"area\s*:\s*([0-9.]+)\s*;", lib_path.read_text())
