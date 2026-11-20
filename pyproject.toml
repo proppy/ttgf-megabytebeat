@@ -1,3 +1,22 @@
+[project]
+name = "ttgf-megabytebeat"
+version = "0.1.0"
+description = "Mixed-signal R-2R ADC/DAC + XLS Bytebeat chip for GF180MCU"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "cocotb>=2.0.0",
+    "docopt==0.6.2",
+    "gf180mcu==1.0.0",
+    "librelane==3.0.17",
+    "openroad==0.0.1",
+    "pyosys==0.71.post40",
+    "pytest>=8.4.0",
+    "xls-python==0.1.9934",
+]
+
+[tool.uv]
+package = false
+
 [tool.ruff]
 line-length = 100
 

@@ -1,0 +1,35 @@
+* 256-code DC linearity sweep on extracted sc_r2r_dac_8bit
+* Expects env.spice in CWD defining PDK corner models + canonical sc_r2r_dac_8bit subckt.
+.include env.spice
+
+VDD vdd 0 5.0
+VSS vss 0 0.0
+VCODE vcode 0 0.0
+
+* Decode integer code v(vcode) = 0..255 into 8 logic bits driven via buf_1
+B_D0 in0 0 V = (floor(floor(v(vcode)+0.5)/1)   - 2*floor(floor(v(vcode)+0.5)/2))   > 0.5 ? 5.0 : 0.0
+B_D1 in1 0 V = (floor(floor(v(vcode)+0.5)/2)   - 2*floor(floor(v(vcode)+0.5)/4))   > 0.5 ? 5.0 : 0.0
+B_D2 in2 0 V = (floor(floor(v(vcode)+0.5)/4)   - 2*floor(floor(v(vcode)+0.5)/8))   > 0.5 ? 5.0 : 0.0
+B_D3 in3 0 V = (floor(floor(v(vcode)+0.5)/8)   - 2*floor(floor(v(vcode)+0.5)/16))  > 0.5 ? 5.0 : 0.0
+B_D4 in4 0 V = (floor(floor(v(vcode)+0.5)/16)  - 2*floor(floor(v(vcode)+0.5)/32))  > 0.5 ? 5.0 : 0.0
+B_D5 in5 0 V = (floor(floor(v(vcode)+0.5)/32)  - 2*floor(floor(v(vcode)+0.5)/64))  > 0.5 ? 5.0 : 0.0
+B_D6 in6 0 V = (floor(floor(v(vcode)+0.5)/64)  - 2*floor(floor(v(vcode)+0.5)/128)) > 0.5 ? 5.0 : 0.0
+B_D7 in7 0 V = (floor(floor(v(vcode)+0.5)/128) - 2*floor(floor(v(vcode)+0.5)/256)) > 0.5 ? 5.0 : 0.0
+
+XEXT_FF0 in0 q0 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__buf_1
+XEXT_FF1 in1 q1 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__buf_1
+XEXT_FF2 in2 q2 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__buf_1
+XEXT_FF3 in3 q3 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__buf_1
+XEXT_FF4 in4 q4 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__buf_1
+XEXT_FF5 in5 q5 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__buf_1
+XEXT_FF6 in6 q6 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__buf_1
+XEXT_FF7 in7 q7 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__buf_1
+
+XDAC vdd vss q7 q6 q5 q4 q3 q2 q1 q0 dac_out sc_r2r_dac_8bit
+
+.control
+dc VCODE 0 255 1
+wrdata dac_dc.dat v(dac_out)
+quit
+.endc
+.end
