@@ -17,11 +17,11 @@ pub proc megabytebeat {
 }
 
 impl megabytebeat {
-    pub fn eval(t: u32, packed_params: u16) -> u8[5] {
-        let a = packed_params[0:4];
-        let b = packed_params[4:8];
-        let c = packed_params[8:12];
-        let d = packed_params[12:16];
+    pub fn samples(t: u32, packed_params: u16) -> u8[5] {
+        let a = packed_params[0+:u4];
+        let b = packed_params[4+:u4];
+        let c = packed_params[8+:u4];
+        let d = packed_params[12+:u4];
         u8[5]:[
             bytebeat::the42melody(t, a, b, c, d), bytebeat::fractaltrees(t, a, b, c, d),
             bytebeat::untitleddroid(t, a, b, c, d), bytebeat::atunetoshare(t, a, b, c, d),
@@ -36,10 +36,22 @@ impl megabytebeat {
     fn next(self) {
         let t = read(self.t);
         let (tok, params) = recv(join(), self.params_r);
-        let pcm = Self::eval(t, params);
+        let pcm = Self::samples(t, params);
         send(tok, self.pcm_s, pcm);
         write(self.t, t + u32:1);
     }
+}
+
+#[test]
+fn megabytebeat_samples_test() {
+    let params = u16:0x0a2a;  // a=0xa, b=0x2, c=0xa, d=0x0
+    assert_eq(megabytebeat::samples(u32:0, params), u8[5]:[0, 0, 0, 0, 0]);
+    let got = megabytebeat::samples(u32:2048, params);
+    assert_eq(got[0], bytebeat::the42melody(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
+    assert_eq(got[1], bytebeat::fractaltrees(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
+    assert_eq(got[2], bytebeat::untitleddroid(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
+    assert_eq(got[3], bytebeat::atunetoshare(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
+    assert_eq(got[4], bytebeat::sierpinskiharmony(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
 }
 
 #[test]
@@ -63,7 +75,7 @@ impl megabytebeat_test {
             let params = if i < u32:16 { u16:0x0a2a } else { u16:0xa375 };
             let tok = send(tok, self.params_s, params);
             let (tok, got) = recv(tok, self.pcm_r);
-            assert_eq(got, megabytebeat::eval(i, params));
+            assert_eq(got, megabytebeat::samples(i, params));
             tok
         }(join());
         send(tok, self.terminator, true);
