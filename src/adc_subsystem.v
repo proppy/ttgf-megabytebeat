@@ -21,15 +21,15 @@ module adc_subsystem (
     adc_ramp u_ramp (
         .clk(clk),
         .reset(reset),
-        .adc_ramp__cmp_r(cmp_bus),
-        .adc_ramp__cmp_r_vld(1'b1),
-        .adc_ramp__cmp_r_rdy(),
-        .adc_ramp__step_s(step_bus),
-        .adc_ramp__step_s_vld(),
-        .adc_ramp__step_s_rdy(1'b1),
-        .adc_ramp__params_s(params_out),
-        .adc_ramp__params_s_vld(params_vld),
-        .adc_ramp__params_s_rdy(params_rdy)
+        ._cmp_r(cmp_bus),
+        ._cmp_r_vld(1'b1),
+        ._cmp_r_rdy(),
+        ._step_s(step_bus),
+        ._step_s_vld(),
+        ._step_s_rdy(1'b1),
+        ._params_s(params_out),
+        ._params_s_vld(params_vld),
+        ._params_s_rdy(params_rdy)
     );
 
     genvar i;

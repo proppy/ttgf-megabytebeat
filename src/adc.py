@@ -9,10 +9,16 @@ and runs XLS JIT, OpenSTA Liberty, KLayout DRC/LVS, and multi-corner ngspice che
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import io
+import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import tarfile
+import tempfile
+import urllib.request
 
 import gdsfactory as gf
 from gf180mcu.layers import LAYER
@@ -23,6 +29,31 @@ import analog
 SRC_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SRC_DIR.parent
 ADC_CANONICAL_PINS = ["VDD", "VSS", *[f"step[{b}]" for b in range(3, -1, -1)], "adc_in", "cmp"]
+XLS_VERSION = "v0.0.0-11174-g32dc47058"
+
+
+def find_or_fetch_xls_bin_dir() -> Path:
+    """Locate XLS CLI binaries supporting impl-style procs (caching release tarball if needed)."""
+    env_dir = os.environ.get("XLS_BIN_DIR")
+    if env_dir and (Path(env_dir) / "ir_converter_main").exists():
+        return Path(env_dir)
+    in_path = shutil.which("ir_converter_main")
+    if in_path:
+        return Path(in_path).parent
+
+    cache_dir = Path.home() / ".cache/xls" / f"xls-{XLS_VERSION}-linux-x64"
+    if not (cache_dir / "ir_converter_main").exists():
+        cache_dir.parent.mkdir(parents=True, exist_ok=True)
+        url = (
+            f"https://github.com/google/xls/releases/download/{XLS_VERSION}/"
+            f"xls-{XLS_VERSION}-linux-x64.tar.gz"
+        )
+        print(f"[xls] Fetching XLS {XLS_VERSION} -> {cache_dir} ...")
+        with urllib.request.urlopen(url) as resp:
+            data = resp.read()
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
+            tf.extractall(cache_dir.parent)
+    return cache_dir
 
 
 @dataclass
@@ -32,13 +63,14 @@ class Adc:
     bits: int
     width_um: float
     area_um2: float
-    gds: Path
-    lef: Path
+    component: gf.Component = field(repr=False)
+    lef: str = field(repr=False)
+    spice: str = field(repr=False)
+    ramp_ir: str = field(repr=False)
+    ramp_verilog: str = field(repr=False)
     lib: Path
     cell_verilog: Path
-    ramp_verilog: Path
     subsystem_verilog: Path
-    spice: Path
 
 
 @gf.cell
@@ -162,57 +194,86 @@ def build_adc_cell(
     return c
 
 
-def _compile_and_check_adc_xls(dslx_path: Path, out_dir: Path, check: bool) -> Path:
-    dslx_src = dslx_path.read_text()
-    ir = xls.convert_dslx_to_ir(
-        dslx_src, str(dslx_path), "adc_ramp", additional_search_paths=[str(SRC_DIR)]
-    )
+def _compile_adc_xls(dslx_path: Path) -> tuple[str, str]:
+    xls_bin = find_or_fetch_xls_bin_dir()
+    ir = subprocess.run(
+        [
+            str(xls_bin / "ir_converter_main"),
+            f"--dslx_path={dslx_path.parent}",
+            "--top=adc_ramp",
+            str(dslx_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
 
-    if check:
-        pkg_fn = xls.parse_ir_package(ir)
-        step_fn = pkg_fn.get_function(xls.mangle_dslx_name("adc_ramp", "adc_ramp_step"))
-        jit = step_fn.to_jit()
-        targets = [2, 5, 8, 11]
-        st_val = xls.parse_typed_value(
-            "(bits[4]:0, bits[4]:0, bits[4]:0, bits[4]:0, bits[4]:0, bits[4]:0)"
-        )
-        emitted_word = None
-        for cyc in range(16):
-            cmp_mask = sum((1 << i) for i in range(4) if cyc < targets[i])
-            res = jit.run([st_val, xls.Value.make_ubits(4, cmp_mask)])
-            st_val = res.get_element(0)
-            if res.get_element(2).get_bits().to_uint64() == 1:
-                emitted_word = res.get_element(3).get_bits().to_uint64()
-        expected = sum(targets[i] << (i * 4) for i in range(4))
-        assert emitted_word == expected, (
-            f"JIT mismatch: got {emitted_word:#x}, expected {expected:#x}"
-        )
-        print(
-            f"  [ADC check] XLS LLVM JIT verified 4x4b in-place crossing latch ({targets} -> {emitted_word:#x})."
-        )
+    with tempfile.TemporaryDirectory() as tmp:
+        ir_path = Path(tmp) / "adc_ramp.ir"
+        opt_ir_path = Path(tmp) / "adc_ramp.opt.ir"
+        ir_path.write_text(ir)
+        opt_ir = subprocess.run(
+            [str(xls_bin / "opt_main"), str(ir_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        opt_ir_path.write_text(opt_ir)
+        verilog = subprocess.run(
+            [
+                str(xls_bin / "codegen_main"),
+                "--generator=pipeline",
+                "--pipeline_stages=1",
+                "--delay_model=unit",
+                "--module_name=adc_ramp",
+                "--reset=reset",
+                "--reset_active_low=false",
+                "--reset_asynchronous=false",
+                "--reset_data_path=true",
+                "--use_system_verilog=false",
+                "--flop_inputs=false",
+                "--flop_outputs=false",
+                str(opt_ir_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    return ir, verilog
 
-    proc_name = [line.split()[1].split("(")[0] for line in ir.splitlines() if "proc " in line][0]
-    opt_ir = xls.optimize_ir(ir, top=proc_name)
-    res = xls.parse_ir_package(opt_ir).schedule_and_codegen(
-        with_delay_model=True,
-        generator="pipeline",
-        pipeline_stages=1,
-        delay_model="unit",
-        module_name="adc_ramp",
-        reset="reset",
-        reset_active_low=False,
-        reset_asynchronous=False,
-        reset_data_path=True,
-        use_system_verilog=False,
-        streaming_channel_data_suffix="",
-        streaming_channel_valid_suffix="_vld",
-        streaming_channel_ready_suffix="_rdy",
-        flop_inputs=False,
-        flop_outputs=False,
+
+def _check_adc_xls(dslx_path: Path, ir: str) -> None:
+    xls_bin = find_or_fetch_xls_bin_dir()
+    subprocess.run(
+        [
+            str(xls_bin / "interpreter_main"),
+            "--compare=jit",
+            f"--dslx_path={dslx_path.parent}",
+            str(dslx_path),
+        ],
+        check=True,
     )
-    ramp_v = out_dir / "adc_ramp.v"
-    ramp_v.write_text(res.get_verilog_text())
-    return ramp_v
+    fn_only_ir = ir.split("\ntop proc ")[0] + "\n"
+    pkg_fn = xls.parse_ir_package(fn_only_ir)
+    step_fn = pkg_fn.get_function("__adc_ramp__adc_ramp__step")
+    jit = step_fn.to_jit()
+    targets = [2, 5, 8, 11]
+    st_val = xls.parse_typed_value(
+        "(bits[4]:0, bits[4]:0, [bits[4]:0, bits[4]:0, bits[4]:0, bits[4]:0])"
+    )
+    emitted_word = None
+    for cyc in range(16):
+        cmp_mask = sum((1 << i) for i in range(4) if cyc < targets[i])
+        res = jit.run([st_val, xls.Value.make_ubits(4, cmp_mask)])
+        st_val = res.get_element(0)
+        if res.get_element(2).get_bits().to_uint64() == 1:
+            emitted_word = res.get_element(3).get_bits().to_uint64()
+    expected = sum(targets[i] << (i * 4) for i in range(4))
+    assert emitted_word == expected, f"JIT mismatch: got {emitted_word:#x}, expected {expected:#x}"
+    print(
+        f"  [ADC check] XLS proc --compare=jit + LLVM JIT verified 4x4b in-place crossing "
+        f"latch ({targets} -> {emitted_word:#x})."
+    )
 
 
 def _check_adc_ngspice(cir_path: Path, cell_name: str, bits: int, out_dir: Path) -> None:
@@ -255,14 +316,11 @@ def build_adc(
     driver: str = "clkinv_4",
     l_1r: float = 6.00,
     l_2r: float = 5.42,
-    out_dir: Path = REPO_ROOT / "gen/adc",
-    check: bool = False,
 ) -> Adc:
     if channels != 4 or bits != 4:
         raise ValueError(
             "Checked-in src/adc_ramp.x & src/sc_adc_ramp_1ch_4b.{lib,v} target 4ch x 4-bit ADC."
         )
-    out_dir.mkdir(parents=True, exist_ok=True)
     cell_name = "sc_adc_ramp_1ch_4b"
     cell = build_adc_cell(bits=bits, driver=driver, l_1r=l_1r, l_2r=l_2r)
     w = float(cell.info["width"])
@@ -277,49 +335,41 @@ def build_adc(
         np.info["rect"] = p.info["rect"]
     named.info["width"] = w
 
-    gds = out_dir / f"{cell_name}.gds"
-    lef = out_dir / f"{cell_name}.lef"
-    lib = SRC_DIR / f"{cell_name}.lib"
-    cell_v = SRC_DIR / f"{cell_name}.v"
-    subsys_v = SRC_DIR / "adc_subsystem.v"
-    spice = out_dir / f"{cell_name}.spice"
-
-    named.write_gds(gds)
-    lef.write_text(analog.export_lef(named, cell_name))
-    spice.write_text(analog.infer_spice(cell, cell_name))
-    ramp_v = _compile_and_check_adc_xls(SRC_DIR / "adc_ramp.x", out_dir, check)
-
-    if check:
-        analog.check_liberty_and_lef(lef, lib, cell_name, expected_area=area)
-        print("  [ADC check] OpenROAD readLef + readLiberty & area match OK.")
-        abut_gds = out_dir / f"{cell_name}_abutted.gds"
-        analog.surround_with_neighbors(named).write_gds(abut_gds)
-        analog.run_klayout_drc(abut_gds, out_dir / "drc")
-        print("  [ADC check] KLayout DRC (4-sided abutted) clean.")
-        analog.run_klayout_lvs(gds, spice, out_dir / "lvs_cmp", cell_name, ["--schematic_simplify"])
-        print("  [ADC check] KLayout LVS (Component.get_netlist() vs GDS) matched.")
-        cir = analog.run_klayout_lvs(
-            gds, spice, out_dir / "lvs_unmerged", cell_name, ["--top_lvl_pins", "--net_only"]
-        )
-        _check_adc_ngspice(cir, cell_name, bits, out_dir)
-
+    ramp_ir, ramp_verilog = _compile_adc_xls(SRC_DIR / "adc_ramp.x")
     return Adc(
         cell_name=cell_name,
         channels=channels,
         bits=bits,
         width_um=w,
         area_um2=area,
-        gds=gds,
-        lef=lef,
-        lib=lib,
-        cell_verilog=cell_v,
-        ramp_verilog=ramp_v,
-        subsystem_verilog=subsys_v,
-        spice=spice,
+        component=named,
+        lef=analog.export_lef(named, cell_name),
+        spice=analog.infer_spice(cell, cell_name),
+        ramp_ir=ramp_ir,
+        ramp_verilog=ramp_verilog,
+        lib=SRC_DIR / f"{cell_name}.lib",
+        cell_verilog=SRC_DIR / f"{cell_name}.v",
+        subsystem_verilog=SRC_DIR / "adc_subsystem.v",
     )
 
 
-if __name__ == "__main__":
+def check_adc(adc: Adc, gds: Path, lef: Path, spice: Path, out_dir: Path) -> None:
+    _check_adc_xls(SRC_DIR / "adc_ramp.x", adc.ramp_ir)
+    analog.check_liberty_and_lef(lef, adc.lib, adc.cell_name, expected_area=adc.area_um2)
+    print("  [ADC check] OpenROAD readLef + readLiberty & area match OK.")
+    abut_gds = out_dir / f"{adc.cell_name}_abutted.gds"
+    analog.surround_with_neighbors(adc.component).write_gds(abut_gds)
+    analog.run_klayout_drc(abut_gds, out_dir / "drc")
+    print("  [ADC check] KLayout DRC (4-sided abutted) clean.")
+    analog.run_klayout_lvs(gds, spice, out_dir / "lvs_cmp", adc.cell_name, ["--schematic_simplify"])
+    print("  [ADC check] KLayout LVS (Component.get_netlist() vs GDS) matched.")
+    cir = analog.run_klayout_lvs(
+        gds, spice, out_dir / "lvs_unmerged", adc.cell_name, ["--top_lvl_pins", "--net_only"]
+    )
+    _check_adc_ngspice(cir, adc.cell_name, adc.bits, out_dir)
+
+
+def main() -> None:
     ap = argparse.ArgumentParser(description="Build & verify 4-bit Ramp ADC subsystem.")
     ap.add_argument("--channels", type=int, default=4)
     ap.add_argument("--bits", type=int, default=4)
@@ -329,14 +379,21 @@ if __name__ == "__main__":
     ap.add_argument("--out-dir", type=Path, default=REPO_ROOT / "gen/adc")
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args()
-    print(
-        build_adc(
-            channels=args.channels,
-            bits=args.bits,
-            driver=args.driver,
-            l_1r=args.l_1r,
-            l_2r=args.l_2r,
-            out_dir=args.out_dir,
-            check=args.check,
-        )
-    )
+
+    adc = build_adc(args.channels, args.bits, args.driver, args.l_1r, args.l_2r)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    gds = args.out_dir / f"{adc.cell_name}.gds"
+    lef = args.out_dir / f"{adc.cell_name}.lef"
+    spice = args.out_dir / f"{adc.cell_name}.spice"
+    ramp_v = args.out_dir / "adc_ramp.v"
+    adc.component.write_gds(gds)
+    lef.write_text(adc.lef)
+    spice.write_text(adc.spice)
+    ramp_v.write_text(adc.ramp_verilog)
+    if args.check:
+        check_adc(adc, gds, lef, spice, args.out_dir)
+    print(adc)
+
+
+if __name__ == "__main__":
+    main()
