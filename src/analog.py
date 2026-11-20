@@ -389,14 +389,13 @@ def infer_spice(c: gf.Component, subckt_name: str) -> str:
     )
     parent: dict[str, str] = {}
 
-    def find(x: str) -> str:
-        while parent.get(x, x) != x:
-            parent[x] = parent.get(parent[x], parent[x])
+    def find_root(x: str) -> str:
+        while x in parent:
             x = parent[x]
         return x
 
     def union(a: str, b: str) -> None:
-        ra, rb = find(a), find(b)
+        ra, rb = find_root(a), find_root(b)
         if ra != rb:
             parent[rb] = ra
 
@@ -429,12 +428,12 @@ def infer_spice(c: gf.Component, subckt_name: str) -> str:
     pin_order = [p.name for p in c.ports] + ["VDD", "VSS"]
     root_to_name: dict[str, str] = {}
     for p in c.ports:
-        root_to_name[find(f"TOP,{p.name}")] = p.name
+        root_to_name[find_root(f"TOP,{p.name}")] = p.name
     net_counter = 0
 
     def net_name(node: str) -> str:
         nonlocal net_counter
-        r = find(node)
+        r = find_root(node)
         if r not in root_to_name:
             net_counter += 1
             root_to_name[r] = f"n_auto_{net_counter}"
