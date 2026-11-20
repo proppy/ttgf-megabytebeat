@@ -8,7 +8,7 @@ Can be run standalone (`python src/dac.py --check`) or imported by `src/chip.py`
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import subprocess
 
@@ -28,11 +28,11 @@ class Dac:
     bits: int
     width_um: float
     area_um2: float
-    gds: Path
-    lef: Path
+    component: gf.Component = field(repr=False)
+    lef: str = field(repr=False)
+    spice: str = field(repr=False)
     lib: Path
     verilog: Path
-    spice: Path
 
 
 @gf.cell
@@ -172,12 +172,9 @@ def build_dac(
     driver: str = "clkbuf_12",
     l_1r: float = 10.00,
     l_2r: float = 9.81,
-    out_dir: Path = REPO_ROOT / "gen/dac",
-    check: bool = False,
 ) -> Dac:
     if bits != 8:
         raise ValueError("Checked-in src/sc_r2r_dac_8bit.{lib,v} targets 8-bit DAC.")
-    out_dir.mkdir(parents=True, exist_ok=True)
     cell_name = "sc_r2r_dac_8bit"
     cell = build_dac_cell(bits=bits, driver=driver, l_1r=l_1r, l_2r=l_2r)
     w = float(cell.info["width"])
@@ -192,41 +189,32 @@ def build_dac(
         np.info["rect"] = p.info["rect"]
     named.info["width"] = w
 
-    gds = out_dir / f"{cell_name}.gds"
-    lef = out_dir / f"{cell_name}.lef"
-    spice = out_dir / f"{cell_name}.spice"
-    lib = SRC_DIR / f"{cell_name}.lib"
-    verilog = SRC_DIR / f"{cell_name}.v"
-
-    named.write_gds(gds)
-    lef.write_text(analog.export_lef(named, cell_name))
-    spice.write_text(analog.infer_spice(cell, cell_name))
-
-    if check:
-        analog.check_liberty_and_lef(lef, lib, cell_name, expected_area=area)
-        print("  [DAC check] OpenROAD readLef + readLiberty & area match OK.")
-        abut_gds = out_dir / f"{cell_name}_abutted.gds"
-        analog.surround_with_neighbors(named).write_gds(abut_gds)
-        analog.run_klayout_drc(abut_gds, out_dir / "drc")
-        print("  [DAC check] KLayout DRC (4-sided abutted) clean.")
-        cir = analog.run_klayout_lvs(gds, spice, out_dir / "lvs", cell_name, ["--top_lvl_pins"])
-        print("  [DAC check] KLayout LVS (Component.get_netlist() vs GDS) matched.")
-        _check_dac_ngspice(cir, cell_name, bits, out_dir)
-
     return Dac(
         cell_name=cell_name,
         bits=bits,
         width_um=w,
         area_um2=area,
-        gds=gds,
-        lef=lef,
-        lib=lib,
-        verilog=verilog,
-        spice=spice,
+        component=named,
+        lef=analog.export_lef(named, cell_name),
+        spice=analog.infer_spice(cell, cell_name),
+        lib=SRC_DIR / f"{cell_name}.lib",
+        verilog=SRC_DIR / f"{cell_name}.v",
     )
 
 
-if __name__ == "__main__":
+def check_dac(dac: Dac, gds: Path, lef: Path, spice: Path, out_dir: Path) -> None:
+    analog.check_liberty_and_lef(lef, dac.lib, dac.cell_name, expected_area=dac.area_um2)
+    print("  [DAC check] OpenROAD readLef + readLiberty & area match OK.")
+    abut_gds = out_dir / f"{dac.cell_name}_abutted.gds"
+    analog.surround_with_neighbors(dac.component).write_gds(abut_gds)
+    analog.run_klayout_drc(abut_gds, out_dir / "drc")
+    print("  [DAC check] KLayout DRC (4-sided abutted) clean.")
+    cir = analog.run_klayout_lvs(gds, spice, out_dir / "lvs", dac.cell_name, ["--top_lvl_pins"])
+    print("  [DAC check] KLayout LVS (Component.get_netlist() vs GDS) matched.")
+    _check_dac_ngspice(cir, dac.cell_name, dac.bits, out_dir)
+
+
+def main() -> None:
     ap = argparse.ArgumentParser(description="Build & verify sc_r2r_dac_8bit sub-block.")
     ap.add_argument("--bits", type=int, default=8)
     ap.add_argument("--driver", default="clkbuf_12")
@@ -235,4 +223,19 @@ if __name__ == "__main__":
     ap.add_argument("--out-dir", type=Path, default=REPO_ROOT / "gen/dac")
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args()
-    print(build_dac(args.bits, args.driver, args.l_1r, args.l_2r, args.out_dir, args.check))
+
+    dac = build_dac(args.bits, args.driver, args.l_1r, args.l_2r)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    gds = args.out_dir / f"{dac.cell_name}.gds"
+    lef = args.out_dir / f"{dac.cell_name}.lef"
+    spice = args.out_dir / f"{dac.cell_name}.spice"
+    dac.component.write_gds(gds)
+    lef.write_text(dac.lef)
+    spice.write_text(dac.spice)
+    if args.check:
+        check_dac(dac, gds, lef, spice, args.out_dir)
+    print(dac)
+
+
+if __name__ == "__main__":
+    main()
