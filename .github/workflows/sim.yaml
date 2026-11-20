@@ -51,3 +51,16 @@ jobs:
 
       - name: Verify Bresenham BPM / tap-tempo sync block (XLS JIT)
         run: uv run python src/bpm.py --step-samples 1024 --check
+
+      - name: Verify unified multi-track megabytebeat proc (XLS JIT) and full-chip RTL/GL cocotb + PnR smoke
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+        run: |
+          uv run python src/bytebeat.py --tracks 5 --check
+          uv run python src/chip.py --target tinytapeout --out-dir gen_tt --sim
+          uv run python src/chip.py --target waferspace --tracks 5 --pnr-smoke --sim
+
+      - name: Verify closed-loop Eurorack mixed-signal co-simulation (ngspice d_cosim + Verilator)
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+        run: uv run python src/cosim.py --gen-dir gen --tracks 5 --cv-r-src 100
