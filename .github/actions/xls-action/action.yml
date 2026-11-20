@@ -61,11 +61,11 @@ runs:
       shell: bash
     - name: test DSLX
       run: |
-        interpreter_main ${{ inputs.dslx-path }}
+        interpreter_main --compare=jit --dslx_path=src ${{ inputs.dslx-path }}
       shell: bash
     - name: convert DSLX to XLS ir
       run: |
-        ir_converter_main --top=${{ inputs.dslx-top }} ${{ inputs.dslx-path }} > ${{ inputs.ir-path }}
+        ir_converter_main --dslx_path=src --top=${{ inputs.dslx-top }} ${{ inputs.dslx-path }} > ${{ inputs.ir-path }}
       shell: bash
     - name: optimize XLS IR
       run: |

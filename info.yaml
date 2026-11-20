@@ -11,11 +11,7 @@ project:
   source_files:
     - "tt_um_proppy_megabytebeat.v"
     - "pwm_audio.v"
-    - "bytebeat_the42melody.v"
-    - "bytebeat_fractaltrees.v"
-    - "bytebeat_untitleddroid.v"
-    - "bytebeat_atunetoshare.v"
-    - "bytebeat_sierpinskiharmony.v"
+    - "megabytebeat.v"
 
 pinout:
   # Inputs

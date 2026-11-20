@@ -23,81 +23,21 @@ jobs:
         shell: bash
         run: pip install -r test/requirements.txt
 
-      - name: Generate Verilog for bytebeat_the42melody
+      - name: Generate Verilog for megabytebeat
         uses: ./.github/actions/xls-action
         with:
-          xls-version: v0.0.0-8961-gf509bf088
-          dslx-path: src/bytebeat_the42melody.x
-          dslx-top: bytebeat_the42melody
-          ir-path: src/bytebeat_the42melody.ir
-          opt-ir-path: src/bytebeat_the42melody.opt.ir
-          verilog-path: src/bytebeat_the42melody.v
-          verilog-module-name: bytebeat_the42melody
+          xls-version: v0.0.0-11174-g32dc47058
+          dslx-path: src/megabytebeat.x
+          dslx-top: megabytebeat
+          ir-path: src/megabytebeat.ir
+          opt-ir-path: src/megabytebeat.opt.ir
+          verilog-path: src/megabytebeat.v
+          verilog-module-name: megabytebeat
           verilog-reset-signal-name: reset
           use-system-verilog: false
           clock-period-ps: 488281
           delay-model: unit
-          artifact-name: xls-generated-the42melody
-      - name: Generate Verilog for bytebeat_fractaltrees
-        uses: ./.github/actions/xls-action
-        with:
-          xls-version: v0.0.0-8961-gf509bf088
-          dslx-path: src/bytebeat_fractaltrees.x
-          dslx-top: bytebeat_fractaltrees
-          ir-path: src/bytebeat_fractaltrees.ir
-          opt-ir-path: src/bytebeat_fractaltrees.opt.ir
-          verilog-path: src/bytebeat_fractaltrees.v
-          verilog-module-name: bytebeat_fractaltrees
-          verilog-reset-signal-name: reset
-          use-system-verilog: false
-          clock-period-ps: 488281
-          delay-model: unit
-          artifact-name: xls-generated-fractaltrees
-      - name: Generate Verilog for bytebeat_untitleddroid
-        uses: ./.github/actions/xls-action
-        with:
-          xls-version: v0.0.0-8961-gf509bf088
-          dslx-path: src/bytebeat_untitleddroid.x
-          dslx-top: bytebeat_untitleddroid
-          ir-path: src/bytebeat_untitleddroid.ir
-          opt-ir-path: src/bytebeat_untitleddroid.opt.ir
-          verilog-path: src/bytebeat_untitleddroid.v
-          verilog-module-name: bytebeat_untitleddroid
-          verilog-reset-signal-name: reset
-          use-system-verilog: false
-          clock-period-ps: 488281
-          delay-model: unit
-          artifact-name: xls-generated-untitleddroid
-      - name: Generate Verilog for bytebeat_atunetoshare
-        uses: ./.github/actions/xls-action
-        with:
-          xls-version: v0.0.0-8961-gf509bf088
-          dslx-path: src/bytebeat_atunetoshare.x
-          dslx-top: bytebeat_atunetoshare
-          ir-path: src/bytebeat_atunetoshare.ir
-          opt-ir-path: src/bytebeat_atunetoshare.opt.ir
-          verilog-path: src/bytebeat_atunetoshare.v
-          verilog-module-name: bytebeat_atunetoshare
-          verilog-reset-signal-name: reset
-          use-system-verilog: false
-          clock-period-ps: 488281
-          delay-model: unit
-          artifact-name: xls-generated-atunetoshare
-      - name: Generate Verilog for bytebeat_sierpinskiharmony
-        uses: ./.github/actions/xls-action
-        with:
-          xls-version: v0.0.0-8961-gf509bf088
-          dslx-path: src/bytebeat_sierpinskiharmony.x
-          dslx-top: bytebeat_sierpinskiharmony
-          ir-path: src/bytebeat_sierpinskiharmony.ir
-          opt-ir-path: src/bytebeat_sierpinskiharmony.opt.ir
-          verilog-path: src/bytebeat_sierpinskiharmony.v
-          verilog-module-name: bytebeat_sierpinskiharmony
-          verilog-reset-signal-name: reset
-          use-system-verilog: false
-          clock-period-ps: 488281
-          delay-model: unit
-          artifact-name: xls-generated-sierpinskiharmony
+          artifact-name: xls-generated-megabytebeat
 
       - name: Run tests
         run: |
