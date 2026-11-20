@@ -134,24 +134,33 @@ def build_dac_cell(
     return c
 
 
-def _check_dac_ngspice(cir_path: Path, cell_name: str, bits: int, out_dir: Path) -> None:
-    ncodes = 1 << bits
-    wrapped_cir = out_dir / f"{cell_name}_ngspice.cir"
-    wrapped_cir.write_text(analog.ngspice_subckt_wrapper(cir_path, cell_name, DAC_CANONICAL_PINS))
-    for corner, rcorner in [("typical", "res_typical"), ("ff", "res_ff"), ("ss", "res_ss")]:
-        cdir = out_dir / f"sim_{corner}"
-        cdir.mkdir(parents=True, exist_ok=True)
-        (cdir / "env.spice").write_text(analog.ngspice_env(corner, rcorner, includes=[wrapped_cir]))
-        subprocess.run(
-            ["ngspice", "-b", str(SRC_DIR / "dac_dc.spice")],
-            cwd=cdir,
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+def _run_dac_dc(
+    subckt_path: Path, cell_name: str, corner: str, rcorner: str, sim_dir: Path
+) -> list[float]:
+    sim_dir.mkdir(parents=True, exist_ok=True)
+    wrapped = sim_dir / f"{cell_name}_ngspice.cir"
+    wrapped.write_text(analog.ngspice_subckt_wrapper(subckt_path, cell_name, DAC_CANONICAL_PINS))
+    (sim_dir / "env.spice").write_text(analog.ngspice_env(corner, rcorner, includes=[wrapped]))
+    subprocess.run(
+        ["ngspice", "-b", str(SRC_DIR / "dac_dc.spice")],
+        cwd=sim_dir,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    dat_file = sim_dir / "dac_dc.dat"
+    return [float(p[1]) for line in dat_file.read_text().splitlines() if (p := line.split())]
 
-        dat_file = cdir / "dac_dc.dat"
-        samples = [float(p[1]) for line in dat_file.read_text().splitlines() if (p := line.split())]
+
+def _check_dac_ngspice(
+    spice_path: Path, cir_path: Path, cell_name: str, bits: int, out_dir: Path
+) -> None:
+    ncodes = 1 << bits
+    typ_extracted: list[float] | None = None
+    for corner, rcorner in [("typical", "res_typical"), ("ff", "res_ff"), ("ss", "res_ss")]:
+        samples = _run_dac_dc(cir_path, cell_name, corner, rcorner, out_dir / f"sim_{corner}")
+        if corner == "typical":
+            typ_extracted = samples
         lsb = (samples[-1] - samples[0]) / (ncodes - 1)
         dnls = [(samples[k + 1] - samples[k]) / lsb - 1.0 for k in range(ncodes - 1)]
         inls = [(samples[k] - (samples[0] + k * lsb)) / lsb for k in range(ncodes)]
@@ -165,6 +174,20 @@ def _check_dac_ngspice(cir_path: Path, cell_name: str, bits: int, out_dir: Path)
             f"  [DAC check | {corner:7s}] {ncodes}-code ngspice OK: "
             f"max|DNL|={max(map(abs, dnls)):.4f} LSB, max|INL|={max(map(abs, inls)):.4f} LSB"
         )
+
+    assert typ_extracted is not None
+    typ_inferred = _run_dac_dc(
+        spice_path, cell_name, "typical", "res_typical", out_dir / "sim_inferred_typical"
+    )
+    lsb = (typ_extracted[-1] - typ_extracted[0]) / (ncodes - 1)
+    max_delta_lsb = max(abs(a - b) / lsb for a, b in zip(typ_inferred, typ_extracted))
+    assert max_delta_lsb < 0.1, (
+        f"DAC inferred vs extracted mismatch: {max_delta_lsb:.4f} LSB >= 0.1 LSB"
+    )
+    print(
+        f"  [DAC check | inf/ext] {ncodes}-code inferred vs KLayout-extracted OK: "
+        f"max|dV|={max_delta_lsb * lsb * 1e3:.3f} mV ({max_delta_lsb:.4f} LSB)"
+    )
 
 
 def build_dac(
@@ -211,7 +234,7 @@ def check_dac(dac: Dac, gds: Path, lef: Path, spice: Path, out_dir: Path) -> Non
     print("  [DAC check] KLayout DRC (4-sided abutted) clean.")
     cir = analog.run_klayout_lvs(gds, spice, out_dir / "lvs", dac.cell_name, ["--top_lvl_pins"])
     print("  [DAC check] KLayout LVS (Component.get_netlist() vs GDS) matched.")
-    _check_dac_ngspice(cir, dac.cell_name, dac.bits, out_dir)
+    _check_dac_ngspice(spice, cir, dac.cell_name, dac.bits, out_dir)
 
 
 def main() -> None:
