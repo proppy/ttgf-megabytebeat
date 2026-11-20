@@ -1,0 +1,50 @@
+* 15-step DC threshold linearity sweep on extracted sc_adc_ramp_1ch_4b
+* Expects env.spice in CWD defining PDK corner models + canonical sc_adc_ramp_1ch_4b subckt.
+.include env.spice
+
+VDD vdd 0 5.0
+VSS vss 0 0.0
+VHI vhi 0 5.0
+VLO vlo 0 0.0
+VADC adc_in 0 0.0
+
+XBUF_HI vhi q_hi vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__buf_1
+XBUF_LO vlo q_lo vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__buf_1
+
+* Canonical pin order: VDD VSS step[3] step[2] step[1] step[0] adc_in cmp
+XADC_0  vdd vss q_lo q_lo q_lo q_lo adc_in cmp_0  sc_adc_ramp_1ch_4b
+XADC_1  vdd vss q_lo q_lo q_lo q_hi adc_in cmp_1  sc_adc_ramp_1ch_4b
+XADC_2  vdd vss q_lo q_lo q_hi q_lo adc_in cmp_2  sc_adc_ramp_1ch_4b
+XADC_3  vdd vss q_lo q_lo q_hi q_hi adc_in cmp_3  sc_adc_ramp_1ch_4b
+XADC_4  vdd vss q_lo q_hi q_lo q_lo adc_in cmp_4  sc_adc_ramp_1ch_4b
+XADC_5  vdd vss q_lo q_hi q_lo q_hi adc_in cmp_5  sc_adc_ramp_1ch_4b
+XADC_6  vdd vss q_lo q_hi q_hi q_lo adc_in cmp_6  sc_adc_ramp_1ch_4b
+XADC_7  vdd vss q_lo q_hi q_hi q_hi adc_in cmp_7  sc_adc_ramp_1ch_4b
+XADC_8  vdd vss q_hi q_lo q_lo q_lo adc_in cmp_8  sc_adc_ramp_1ch_4b
+XADC_9  vdd vss q_hi q_lo q_lo q_hi adc_in cmp_9  sc_adc_ramp_1ch_4b
+XADC_10 vdd vss q_hi q_lo q_hi q_lo adc_in cmp_10 sc_adc_ramp_1ch_4b
+XADC_11 vdd vss q_hi q_lo q_hi q_hi adc_in cmp_11 sc_adc_ramp_1ch_4b
+XADC_12 vdd vss q_hi q_hi q_lo q_lo adc_in cmp_12 sc_adc_ramp_1ch_4b
+XADC_13 vdd vss q_hi q_hi q_lo q_hi adc_in cmp_13 sc_adc_ramp_1ch_4b
+XADC_14 vdd vss q_hi q_hi q_hi q_lo adc_in cmp_14 sc_adc_ramp_1ch_4b
+
+.control
+dc VADC 0.0 5.0 0.001
+meas dc vtrip_0  FIND v(adc_in) WHEN v(cmp_0)=2.5
+meas dc vtrip_1  FIND v(adc_in) WHEN v(cmp_1)=2.5
+meas dc vtrip_2  FIND v(adc_in) WHEN v(cmp_2)=2.5
+meas dc vtrip_3  FIND v(adc_in) WHEN v(cmp_3)=2.5
+meas dc vtrip_4  FIND v(adc_in) WHEN v(cmp_4)=2.5
+meas dc vtrip_5  FIND v(adc_in) WHEN v(cmp_5)=2.5
+meas dc vtrip_6  FIND v(adc_in) WHEN v(cmp_6)=2.5
+meas dc vtrip_7  FIND v(adc_in) WHEN v(cmp_7)=2.5
+meas dc vtrip_8  FIND v(adc_in) WHEN v(cmp_8)=2.5
+meas dc vtrip_9  FIND v(adc_in) WHEN v(cmp_9)=2.5
+meas dc vtrip_10 FIND v(adc_in) WHEN v(cmp_10)=2.5
+meas dc vtrip_11 FIND v(adc_in) WHEN v(cmp_11)=2.5
+meas dc vtrip_12 FIND v(adc_in) WHEN v(cmp_12)=2.5
+meas dc vtrip_13 FIND v(adc_in) WHEN v(cmp_13)=2.5
+meas dc vtrip_14 FIND v(adc_in) WHEN v(cmp_14)=2.5
+quit
+.endc
+.end

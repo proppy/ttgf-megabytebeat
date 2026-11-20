@@ -1,0 +1,61 @@
+/* Copyright 2026 Google LLC.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+library(sc_adc_ramp_1ch_4b_lib) {
+  delay_model : table_lookup;
+  time_unit : "1ns";
+  voltage_unit : "1V";
+  current_unit : "1mA";
+  capacitive_load_unit(1, pf);
+  pulling_resistance_unit : "1ohm";
+  leakage_power_unit : "1uW";
+  input_threshold_pct_fall : 50;
+  input_threshold_pct_rise : 50;
+  output_threshold_pct_fall : 50;
+  output_threshold_pct_rise : 50;
+  slew_derate_from_library : 0.5;
+  slew_lower_threshold_pct_fall : 30;
+  slew_lower_threshold_pct_rise : 30;
+  slew_upper_threshold_pct_fall : 70;
+  slew_upper_threshold_pct_rise : 70;
+  default_fanout_load : 1.0;
+
+  type(adc_step_bus) {
+    base_type : array;
+    data_type : bit;
+    bit_width : 4;
+    bit_from : 3;
+    bit_to : 0;
+    downto : true;
+  }
+
+  cell(sc_adc_ramp_1ch_4b) {
+    area : 667.34;
+    dont_touch : true;
+    dont_use : true;
+    pg_pin(VDD) {
+      voltage_name : VDD;
+      pg_type : primary_power;
+    }
+    pg_pin(VSS) {
+      voltage_name : VSS;
+      pg_type : primary_ground;
+    }
+    bus(step) {
+      bus_type : adc_step_bus;
+      direction : input;
+      capacitance : 0.0055;
+      max_transition : 3.0;
+    }
+    pin(adc_in) {
+      direction : input;
+      is_analog : true;
+      capacitance : 0.010;
+    }
+    pin(cmp) {
+      direction : output;
+      max_capacitance : 0.250;
+    }
+  }
+}

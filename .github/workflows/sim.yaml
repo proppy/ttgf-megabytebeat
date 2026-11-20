@@ -43,3 +43,8 @@ jobs:
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
         run: uv run python src/dac.py --bits 8 --check
+
+      - name: Verify 4-bit Ramp ADC subsystem (XLS JIT, DRC, LVS, Liberty, 16-step multi-corner ngspice)
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+        run: uv run python src/adc.py --channels 4 --bits 4 --check
