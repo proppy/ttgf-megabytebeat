@@ -14,6 +14,7 @@ from gdsfactory.get_netlist import PortCenterMatcher
 import gf180mcu  # noqa: F401 - activates gf180mcu PDK
 from gf180mcu.layers import LAYER
 import klayout.db as pya
+from networkx.utils import UnionFind
 
 PDK_ROOT = Path(os.environ.get("PDK_ROOT", "/home/exedev/workspace/pdk"))
 GF180_DIR = PDK_ROOT / "gf180mcuD"
@@ -387,33 +388,22 @@ def infer_spice(c: gf.Component, subckt_name: str) -> str:
         on_dangling_port="ignore",
         port_matcher=PortCenterMatcher(tolerance_dbu=5),
     )
-    parent: dict[str, str] = {}
-
-    def find_root(x: str) -> str:
-        while x in parent:
-            x = parent[x]
-        return x
-
-    def union(a: str, b: str) -> None:
-        ra, rb = find_root(a), find_root(b)
-        if ra != rb:
-            parent[rb] = ra
-
+    uf: UnionFind[str] = UnionFind()
     leaf_devs: list[tuple[str, str, dict]] = []
 
     def walk(cell_key: str, prefix: str) -> None:
         cell_nl = nl[cell_key]
         for net in cell_nl.get("nets", ()):
-            union(f"{prefix}{net['p1']}", f"{prefix}{net['p2']}")
+            uf.union(f"{prefix}{net['p1']}", f"{prefix}{net['p2']}")
         for ext_p, inner_target in cell_nl.get("ports", {}).items():
             lhs = f"{prefix[:-1]},{ext_p}" if prefix else f"TOP,{ext_p}"
-            union(lhs, f"{prefix}{inner_target}")
+            uf.union(lhs, f"{prefix}{inner_target}")
         for iname, idata in cell_nl.get("instances", {}).items():
             comp_name = idata["component"]
             sub_path = f"{prefix}{iname}"
             settings = idata.get("settings", {})
             if comp_name.startswith(("_wire_", "via_m1_m2")):
-                union(f"{sub_path},e1", f"{sub_path},e2")
+                uf.union(f"{sub_path},e1", f"{sub_path},e2")
             elif comp_name.startswith("horiz_hres_6p0"):
                 leaf_devs.append((sub_path, "hres", settings))
             elif comp_name.startswith("std_cell"):
@@ -428,12 +418,12 @@ def infer_spice(c: gf.Component, subckt_name: str) -> str:
     pin_order = [p.name for p in c.ports] + ["VDD", "VSS"]
     root_to_name: dict[str, str] = {}
     for p in c.ports:
-        root_to_name[find_root(f"TOP,{p.name}")] = p.name
+        root_to_name[uf[f"TOP,{p.name}"]] = p.name
     net_counter = 0
 
     def net_name(node: str) -> str:
         nonlocal net_counter
-        r = find_root(node)
+        r = uf[node]
         if r not in root_to_name:
             net_counter += 1
             root_to_name[r] = f"n_auto_{net_counter}"
