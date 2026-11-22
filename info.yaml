@@ -1,48 +1,58 @@
-# Tiny Tapeout project information
+# Tiny Tapeout project information (TTGF26c mixed-signal analog slot)
 project:
   title:        "megabytebeat"
   author:       "proppy"
   discord:      "proppy"
-  description:  "Best-of compilation of bytebeat 2011's greatest hits on-a-chip."
+  description:  "Mixed-signal bytebeat synthesizer with 4x 4-bit ramp ADCs, Bresenham BPM sync, 5-track XLS core, and 2x 8-bit poly R-2R DACs."
   language:     "xls"
-  clock_hz:     2048000  # 8000 * 256
-  tiles: "3x2"
-  top_module:  "tt_um_proppy_megabytebeat"
+  clock_hz:     32768
+  tiles:        "3x2"
+  analog_pins:  6
+  uses_vapwr:   false
+  top_module:   "tt_um_proppy_megabytebeat"
   source_files:
     - "tt_um_proppy_megabytebeat.v"
     - "pwm_audio.v"
     - "megabytebeat.v"
 
 pinout:
-  # Inputs
-  ui[0]: "param `a` bit 0/3"
-  ui[1]: "param `a` bit 1/3"
-  ui[2]: "param `a` bit 2/3"
-  ui[3]: "param `a` bit 3/3"
-  ui[4]: "param `b` bit 0/3"
-  ui[5]: "param `b` bit 1/3"
-  ui[6]: "param `b` bit 2/3"
-  ui[7]: "param `b` bit 3/3"
+  # Inputs (Normal mode: uio[0]=0; DAC char mode: uio[0]=1 drives ui[7:0] -> DAC0 & DAC1)
+  ui[0]: "bpm_in (sync pulse) / dac_char[0]"
+  ui[1]: "dac0_sel[0] / dac_char[1]"
+  ui[2]: "dac0_sel[1] / dac_char[2]"
+  ui[3]: "dac0_sel[2] / dac_char[3]"
+  ui[4]: "dac1_sel[0] / dac_char[4]"
+  ui[5]: "dac1_sel[1] / dac_char[5]"
+  ui[6]: "dac1_sel[2] / dac_char[6]"
+  ui[7]: "adc_bypass (fixed params) / dac_char[7]"
 
-  # Outputs
-  uo[0]: "track #0 PWM output"
-  uo[1]: "track #1 PWM output"
-  uo[2]: "track #2 PWM output"
-  uo[3]: "track #3 PWM output"
-  uo[4]: "N/A"
-  uo[5]: "N/A"
-  uo[6]: "N/A"
-  uo[7]: "track #7 PWM output"
+  # Outputs (muxed by uio[7:6]: 00=dac0_pcm, 01={b,a}, 10={d,c}, 11={step,cmp})
+  uo[0]: "telemetry[0] (dac0_pcm[0] / a[0] / c[0] / cmp[0])"
+  uo[1]: "telemetry[1] (dac0_pcm[1] / a[1] / c[1] / cmp[1])"
+  uo[2]: "telemetry[2] (dac0_pcm[2] / a[2] / c[2] / cmp[2])"
+  uo[3]: "telemetry[3] (dac0_pcm[3] / a[3] / c[3] / cmp[3])"
+  uo[4]: "telemetry[4] (dac0_pcm[4] / b[0] / d[0] / step[0])"
+  uo[5]: "telemetry[5] (dac0_pcm[5] / b[1] / d[1] / step[1])"
+  uo[6]: "telemetry[6] (dac0_pcm[6] / b[2] / d[2] / step[2])"
+  uo[7]: "telemetry[7] (dac0_pcm[7] / b[3] / d[3] / step[3])"
 
-  # Bidirectional pins
-  uio[0]: "param `c` bit 0/3"
-  uio[1]: "param `c` bit 1/3"
-  uio[2]: "param `c` bit 2/3"
-  uio[3]: "param `c` bit 3/3"
-  uio[4]: "param `d` bit 0/3"
-  uio[5]: "param `d` bit 1/3"
-  uio[6]: "param `d` bit 2/3"
-  uio[7]: "param `d` bit 3/3"
+  # Bidirectional pins (control inputs, uio_oe = 0)
+  uio[0]: "dac_char_en (0=synth, 1=ui_in->DAC0&DAC1)"
+  uio[1]: "adc_manual_step (0=auto ramp, 1=uio[5:2]->step)"
+  uio[2]: "manual_step[0]"
+  uio[3]: "manual_step[1]"
+  uio[4]: "manual_step[2]"
+  uio[5]: "manual_step[3]"
+  uio[6]: "out_mux[0]"
+  uio[7]: "out_mux[1]"
+
+  # Analog pins
+  ua[0]: "adc_in[0] (param a analog CV)"
+  ua[1]: "adc_in[1] (param b analog CV)"
+  ua[2]: "adc_in[2] (param c analog CV)"
+  ua[3]: "adc_in[3] (param d analog CV)"
+  ua[4]: "dac_out[0] (8-bit R-2R DAC #0)"
+  ua[5]: "dac_out[1] (8-bit R-2R DAC #1)"
 
 # Do not change!
 yaml_version: 6
