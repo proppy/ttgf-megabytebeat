@@ -6,7 +6,7 @@ project:
   description:  "Mixed-signal bytebeat synthesizer with 4x 4-bit ramp ADCs, Bresenham BPM sync, 5-track XLS core, and 2x 8-bit poly R-2R DACs."
   language:     "xls"
   clock_hz:     32768
-  tiles:        "3x2"
+  tiles:        "2x2"
   analog_pins:  6
   uses_vapwr:   false
   top_module:   "tt_um_proppy_megabytebeat"
