@@ -1,0 +1,50 @@
+* 15-step DC threshold linearity sweep on passive r2r_ladder_4bit_sum + 5x clkinv_4 + clkbuf_1
+* Expects env.spice in CWD defining PDK corner models, 7t5v0 stdcells, and r2r_ladder_4bit_sum subckt.
+.include env.spice
+
+* Structural channel matching src/sc_adc_ramp_1ch_4b.v
+.SUBCKT sc_adc_ramp_1ch_4b vdd vss s3 s2 s1 s0 adc_in cmp
+X_TIEH hi vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__tieh
+X_TERM hi drv_term vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
+X_I0 s0 drv0 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
+X_I1 s1 drv1 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
+X_I2 s2 drv2 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
+X_I3 s3 drv3 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
+XR2R vss drv_term drv3 drv2 drv1 drv0 vsum adc_in r2r_ladder_4bit_sum
+X_CMP vsum cmp vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_1
+.ENDS sc_adc_ramp_1ch_4b
+
+VDD vdd 0 5.0
+VSS vss 0 0.0
+VHI vhi 0 5.0
+VLO vlo 0 0.0
+VADC adc_in 0 0.0
+
+XBUF_HI vhi q_hi vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__buf_1
+XBUF_LO vlo q_lo vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__buf_1
+
+XADC_0  vdd vss q_lo q_lo q_lo q_lo adc_in cmp_0  sc_adc_ramp_1ch_4b
+XADC_1  vdd vss q_lo q_lo q_lo q_hi adc_in cmp_1  sc_adc_ramp_1ch_4b
+XADC_2  vdd vss q_lo q_lo q_hi q_lo adc_in cmp_2  sc_adc_ramp_1ch_4b
+XADC_3  vdd vss q_lo q_lo q_hi q_hi adc_in cmp_3  sc_adc_ramp_1ch_4b
+XADC_4  vdd vss q_lo q_hi q_lo q_lo adc_in cmp_4  sc_adc_ramp_1ch_4b
+XADC_5  vdd vss q_lo q_hi q_lo q_hi adc_in cmp_5  sc_adc_ramp_1ch_4b
+XADC_6  vdd vss q_lo q_hi q_hi q_lo adc_in cmp_6  sc_adc_ramp_1ch_4b
+XADC_7  vdd vss q_lo q_hi q_hi q_hi adc_in cmp_7  sc_adc_ramp_1ch_4b
+XADC_8  vdd vss q_hi q_lo q_lo q_lo adc_in cmp_8  sc_adc_ramp_1ch_4b
+XADC_9  vdd vss q_hi q_lo q_lo q_hi adc_in cmp_9  sc_adc_ramp_1ch_4b
+XADC_10 vdd vss q_hi q_lo q_hi q_lo adc_in cmp_10 sc_adc_ramp_1ch_4b
+XADC_11 vdd vss q_hi q_lo q_hi q_hi adc_in cmp_11 sc_adc_ramp_1ch_4b
+XADC_12 vdd vss q_hi q_hi q_lo q_lo adc_in cmp_12 sc_adc_ramp_1ch_4b
+XADC_13 vdd vss q_hi q_hi q_lo q_hi adc_in cmp_13 sc_adc_ramp_1ch_4b
+XADC_14 vdd vss q_hi q_hi q_hi q_lo adc_in cmp_14 sc_adc_ramp_1ch_4b
+
+.control
+dc VADC 0.0 5.0 0.001
+foreach k 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+  meas dc vtrip FIND v(adc_in) WHEN v(cmp_$k)=2.5
+  echo $&vtrip >> out.dat
+end
+quit
+.endc
+.end
