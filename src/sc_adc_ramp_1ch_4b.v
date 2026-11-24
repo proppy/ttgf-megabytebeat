@@ -12,9 +12,12 @@ module sc_adc_ramp_1ch_4b (
     output wire       cmp
 );
 `ifdef SIM
-    // In digital cocotb sim, testbench drives comparator PWM pulse width (0..15 clocks) on adc_in
-    assign cmp = adc_in;
-    wire _unused = &{step, 1'b0};
+    r2r_ladder_4bit_sum u_r2r (
+        .term(1'b0),
+        .in(~step),
+        .out(cmp),
+        .sum_in(adc_in)
+    );
 `else
     wire       term_tie;
     wire       term_drv;
