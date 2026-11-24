@@ -4,7 +4,7 @@
 
 Follows cocotb's `analog_model` pattern: auto-discovers preserved `u_r2r` macro instances
 in both hierarchical RTL and flattened post-PnR Gate-Level netlists, keeping Verilog stubs
-pure pass-throughs while verifying full-resolution converter codes and voltages in Python.
+pure pass-throughs while modeling real R-2R voltages and comparator trip points in Python.
 """
 
 from __future__ import annotations
@@ -15,7 +15,9 @@ import re
 import sys
 import tempfile
 
+import cocotb
 from cocotb.handle import HierarchyArrayObject, HierarchyObject
+from cocotb.triggers import ValueChange
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = REPO_ROOT / "src"
@@ -325,3 +327,79 @@ class DacAmsBridge:
             self._stop_task = None
             await task
         await self._do_stop()
+
+
+class R2RAdcModel:
+    """Event-driven Python analog model for 4-bit summing `r2r_ladder_4bit_sum` ADCs.
+
+    Watches each `u_r2r.in[3:0]` bus (= `~step[3:0]` after `clkinv_4` drivers in both RTL
+    and GL) via `ValueChange`, computes the resistive-summing node voltage
+    `V_sum = (V_in + V_dd * in / 16) / 2`, and drives `drive_handle` (e.g. `dut.ua_in`
+    or `dut.adc_in`) with the `clkbuf_1` comparator decision `V_sum > V_dd / 2`.
+    """
+
+    def __init__(
+        self,
+        dut,
+        drive_handle,
+        expected_channels: int = 4,
+        vdd: float = 3.3,
+    ) -> None:
+        self.vdd = vdd
+        self._drive = drive_handle
+        self._insts = find_r2r_instances(dut, width=4)
+        assert len(self._insts) == expected_channels, (
+            f"Expected {expected_channels} r2r_ladder_4bit_sum instances, "
+            f"found {len(self._insts)}: {[p for p, _ in self._insts]}"
+        )
+        self._vin = [0.0] * expected_channels
+        self._tasks: list = []
+
+    @property
+    def channels(self) -> int:
+        return len(self._insts)
+
+    def ladder_codes(self) -> list[int]:
+        """Return inverted ramp codes `in[3:0]` arriving at each passive ladder (0 during off)."""
+        out = []
+        for path, pins in self._insts:
+            term = int(pins["term"].value)
+            assert term == 0, f"{path}.term={term}, expected 0 (tieh -> clkinv_4)"
+            out.append(int(pins["in"].value))
+        return out
+
+    def set_voltages(self, voltages: list[float]) -> None:
+        assert len(voltages) == self.channels
+        self._vin = list(voltages)
+        self._update_comparators()
+
+    def set_codes(self, codes: list[int]) -> None:
+        """Set mid-bin analog CV voltages corresponding to target 4-bit codes (0..15)."""
+        self.set_voltages([self.vdd * (c + 0.5) / 16.0 for c in codes])
+
+    def _update_comparators(self) -> None:
+        mask = 0
+        for ch, (_, pins) in enumerate(self._insts):
+            in_val = pins["in"].value
+            if not in_val.is_resolvable:
+                continue
+            v_dac = self.vdd * int(in_val) / 16.0
+            v_sum = 0.5 * (self._vin[ch] + v_dac)
+            if v_sum > 0.5 * self.vdd:
+                mask |= 1 << ch
+        self._drive.value = mask
+
+    def start(self) -> None:
+        self._update_comparators()
+        for _, pins in self._insts:
+            self._tasks.append(cocotb.start_soon(self._watch(pins["in"])))
+
+    def stop(self) -> None:
+        for task in self._tasks:
+            task.cancel()
+        self._tasks.clear()
+
+    async def _watch(self, sig) -> None:
+        while True:
+            await ValueChange(sig)
+            self._update_comparators()
