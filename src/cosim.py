@@ -39,19 +39,18 @@ class CosimMetrics:
 
 def _build_verilator_cosim_so(
     cosim_dir: Path,
-    adc_ramp_v: Path,
-    bpm_sync_v: Path,
-    megabytebeat_v: Path,
+    core_v: Path,
 ) -> tuple[Path, list[str], list[tuple[str, int, int]]]:
-    """Combine checked-in cosim_digital_core.v with XLS RTL and compile via ngspice vlnggen."""
+    """Combine checked-in cosim_digital_core.v with fused XLS RTL and compile via ngspice vlnggen."""
     combined_v = cosim_dir / "cosim_digital_core.v"
     combined_v.write_text(
         "\n\n".join(
             [
+                "`define SIM 1",
                 (SRC_DIR / "cosim_digital_core.v").read_text(),
-                adc_ramp_v.read_text(),
-                bpm_sync_v.read_text(),
-                megabytebeat_v.read_text(),
+                core_v.read_text(),
+                (SRC_DIR / "sc_adc_ramp_1ch_4b.v").read_text(),
+                (SRC_DIR / "r2r_ladder_4bit_sum.v").read_text(),
             ]
         )
     )
@@ -132,12 +131,10 @@ def run_eurorack_cosim(
     cosim_dir = gen_dir / "cosim"
     cosim_dir.mkdir(parents=True, exist_ok=True)
 
-    print("[cosim 1/3] Compiling XLS digital RTL to Verilator d_cosim shared library ...")
+    print("[cosim 1/3] Compiling fused XLS digital RTL to Verilator d_cosim shared library ...")
     so_path, in_ports, out_ports = _build_verilator_cosim_so(
         cosim_dir,
-        adc_ramp_v=gen_dir / "adc/adc_ramp.v",
-        bpm_sync_v=gen_dir / "bpm/bpm_sync.v",
-        megabytebeat_v=gen_dir / "bytebeat/megabytebeat.v",
+        core_v=gen_dir / "xls/megabytebeat_core.v",
     )
     adc_cir = cosim_dir / "r2r_ladder_4bit_sum_ngspice.cir"
     adc_cir.write_text(analog.spice_to_ngspice(gen_dir / "adc/r2r_ladder_4bit_sum.spice"))
