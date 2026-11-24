@@ -2,8 +2,8 @@
 """Top-level mixed-signal chip orchestrator.
 
 Builds pure-passive R-2R analog macros (`dac`, `adc`), compiles the fused XLS DSLX core
-(`src/megabytebeat.x` instantiating 4x `sc_adc_ramp_1ch_4b` via `#[extern_verilog]`),
-assembles stock LibreLane configs, and runs cocotb (`analog_model`) + `cosim` verification.
+(`src/megabytebeat.x` instantiating 4x `sc_adc_ramp_1ch_4b` + 5x `sc_r2r_dac_8bit` via
+`#[extern_verilog]`), assembles stock LibreLane configs, and runs cocotb (`analog_model`) + `cosim`.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ async def test_megabytebeat_chip_core(dut) -> None:
 
     # Verify exact 5-track 8-bit DAC codes across 2 sweeps (32 clocks = 8 samples at 120 BPM).
     # First 3 samples (t=0..2) use init params 0x0a2a; tick 15 latches [5,1,3,0] for t>=3.
-    # Each sample latches into dac_reg on the rising edge of ticks 3,7,11,15,19,23,27,31.
+    # Each sample latches into ChipState.pcm on the rising edge of ticks 3,7,11,15,19,23,27,31.
     t_idx = 0
     for cyc in range(36):
         await RisingEdge(dut.clk)
@@ -201,9 +201,9 @@ def compile_xls_core(
     return v_path
 
 
-def find_adc_macro_instances(core_v: Path, core_inst: str) -> list[str]:
-    """Discover XLS #[extern_verilog] sc_adc_ramp_1ch_4b instance paths in channel order (0..3)."""
-    matches = re.findall(r"\bsc_adc_ramp_1ch_4b\s+(\w+)\s*\(", core_v.read_text())
+def _find_macro_instances(core_v: Path, wrapper_module: str, core_inst: str) -> list[str]:
+    """Discover XLS #[extern_verilog] analog macro instance paths in natural channel order."""
+    matches = re.findall(rf"\b{re.escape(wrapper_module)}\s+(\w+)\s*\(", core_v.read_text())
 
     def _key(name: str) -> list[int | str]:
         norm = re.sub(r"__(\d+)_inst$", r"[\1]_inst", name)
@@ -211,6 +211,16 @@ def find_adc_macro_instances(core_v: Path, core_inst: str) -> list[str]:
         return [int(tok) if tok.isdigit() else tok for tok in re.split(r"(\d+)", norm)]
 
     return [f"{core_inst}.{inst}.u_r2r" for inst in sorted(matches, key=_key)]
+
+
+def find_adc_macro_instances(core_v: Path, core_inst: str) -> list[str]:
+    """Discover XLS #[extern_verilog] sc_adc_ramp_1ch_4b instance paths in channel order (0..3)."""
+    return _find_macro_instances(core_v, "sc_adc_ramp_1ch_4b", core_inst)
+
+
+def find_dac_macro_instances(core_v: Path, core_inst: str) -> list[str]:
+    """Discover XLS #[extern_verilog] sc_r2r_dac_8bit instance paths in channel order."""
+    return _find_macro_instances(core_v, "sc_r2r_dac_8bit", core_inst)
 
 
 def _rel_dir_ref(path: Path, base_dir: Path) -> str:
@@ -381,12 +391,10 @@ def run_stock_librelane(
         path: {"location": [round(18.0 + ch * 38.0, 2), 310.0], "orientation": "N"}
         for ch, path in enumerate(adc_paths)
     }
+    dac_paths = find_dac_macro_instances(core_v, core_inst="u_core")[:tracks]
     dac_insts = {
-        f"gen_dac[{t}].u_dac.u_r2r": {
-            "location": [round(180.0 + t * 56.0, 2), 298.8],
-            "orientation": "N",
-        }
-        for t in range(tracks)
+        path: {"location": [round(180.0 + t * 56.0, 2), 298.8], "orientation": "N"}
+        for t, path in enumerate(dac_paths)
     }
     cfg = {
         "DESIGN_NAME": "megabytebeat_chip_core",
@@ -479,7 +487,7 @@ def build_chip(
 
     dac_dir = out_dir / "dac"
     dac_s, dac_cell, dac_pins = dac.build_dac()
-    dac_gds, dac_lef, dac_lib, dac_spice = dac.emit_r2r(dac_s, dac_cell, dac_pins, dac_dir)
+    dac_gds, dac_lef, dac_lib, dac_spice = analog.emit_macro(dac_s, dac_cell, dac_pins, dac_dir)
     if check:
         dac.check_dac(dac_cell, dac_gds, dac_spice, dac_pins, dac_dir)
     dac_col = SimpleNamespace(
@@ -495,7 +503,7 @@ def build_chip(
 
     adc_dir = out_dir / "adc"
     adc_s, adc_cell, adc_pins = adc.build_adc()
-    adc_gds, adc_lef, adc_lib, adc_spice = dac.emit_r2r(adc_s, adc_cell, adc_pins, adc_dir)
+    adc_gds, adc_lef, adc_lib, adc_spice = analog.emit_macro(adc_s, adc_cell, adc_pins, adc_dir)
     if check:
         adc.check_adc(adc_cell, adc_gds, adc_spice, adc_pins, adc_dir)
     adc_col = SimpleNamespace(

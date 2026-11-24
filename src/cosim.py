@@ -51,6 +51,8 @@ def _build_verilator_cosim_so(
                 core_v.read_text(),
                 (SRC_DIR / "sc_adc_ramp_1ch_4b.v").read_text(),
                 (SRC_DIR / "r2r_ladder_4bit_sum.v").read_text(),
+                (SRC_DIR / "sc_r2r_dac_8bit.v").read_text(),
+                (SRC_DIR / "r2r_ladder_8bit.v").read_text(),
             ]
         )
     )

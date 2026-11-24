@@ -1,9 +1,12 @@
 // Copyright 2026 Google LLC.
 // SPDX-License-Identifier: Apache-2.0
 
-// Unified Mixed-Signal Multi-Track Bytebeat Synthesizer & Chip Core.
-// `megabytebeat`: TTGF26c core (4x ADC + BPM + 5-track synth + 2x track-selected DAC).
-// `megabytebeat_core`: wafer.space / Eurorack 5-track core (4x ADC + BPM + 5-track synth).
+// Fused Mixed-Signal Bytebeat Synthesizer Cores:
+//   - `MegaBytebeat` (TTGF26c 2x2): 4x 4-bit Ramp ADC (#[extern_verilog] sc_adc_ramp_1ch_4b)
+//     -> 32.768 kHz Bresenham BPM Sync -> 5-Track Bytebeat Synth (held `pcm_s` for 5x PWM)
+//     -> 2x Track-Selected 8-bit R-2R DAC (`dac::r2r_dac_bank<u32:2>`).
+//   - `megabytebeat_core` (wafer.space / Eurorack cosim): same `MegaBytebeat::step` DSP/ADC/BPM
+//     core driving 5x 8-bit R-2R DAC (`dac::r2r_dac_bank<u32:5>`) + sample-tick `pcm_s`.
 
 #![feature(explicit_state_access)]
 
@@ -27,12 +30,7 @@ pub struct State {
     pcm: u8[5],
 }
 
-pub struct ChipState {
-    adc: adc_ramp::AdcState,
-    bpm: bpm_sync::BpmState,
-    t: u32,
-}
-
+// TTGF26c 2x2 mixed-signal core: 4x ADC + 2x track-selected DAC + held 5x 8-bit PCM for PWM.
 pub proc MegaBytebeat {
     en_r: chan<bool> in,
     bpm_r: chan<bool> in,
@@ -54,6 +52,19 @@ impl MegaBytebeat {
             bytebeat::untitleddroid(t, a, b, c, d), bytebeat::atunetoshare(t, a, b, c, d),
             bytebeat::sierpinskiharmony(t, a, b, c, d),
         ]
+    }
+
+    pub fn step(
+        state: State, en: bool, bpm_in: bool, adc_in: u4[4],
+    ) -> (State, u4, bool, u16, bool, u8[5]) {
+        let (next_adc, step_eff, adc_vld, adc_params) =
+            adc_ramp::adc_ramp_step(state.adc, en, adc_in);
+        let (next_bpm, sample_tick, params) =
+            bpm_sync::bpm_sync_step(state.bpm, bpm_in, adc_params, adc_vld);
+        let next_pcm = if sample_tick { Self::samples(state.t, params) } else { state.pcm };
+        let next_t = if sample_tick { state.t + u32:1 } else { state.t };
+        let next_state = State { adc: next_adc, bpm: next_bpm, t: next_t, pcm: next_pcm };
+        (next_state, step_eff, adc_vld, adc_params, sample_tick, next_pcm)
     }
 
     pub fn new(
@@ -85,15 +96,10 @@ impl MegaBytebeat {
         let (tok_e, en) = recv(join(), self.en_r);
         let (tok_b, bpm_in) = recv(join(), self.bpm_r);
         let (tok_a, adc_in) = recv(join(), self.adc_in_r);
-        let (tok_d, dac_sel) = recv(join(), self.dac_sel_r);
-        let tok = join(tok_e, tok_b, tok_a, tok_d);
+        let (tok_sel, dac_sel) = recv(join(), self.dac_sel_r);
+        let tok = join(tok_e, tok_b, tok_a, tok_sel);
 
-        let (next_adc, _, adc_vld, adc_params) = adc_ramp::adc_ramp_step(state.adc, en, adc_in);
-        let (next_bpm, sample_tick, params) =
-            bpm_sync::bpm_sync_step(state.bpm, bpm_in, adc_params, adc_vld);
-        let next_pcm = if sample_tick { Self::samples(state.t, params) } else { state.pcm };
-        let next_t = if sample_tick { state.t + u32:1 } else { state.t };
-
+        let (next_state, _, _, _, _, _) = Self::step(state, en, bpm_in, adc_in);
         let dac_codes = u8[2]:[
             state.pcm[if dac_sel[0] < u3:5 { dac_sel[0] } else { u3:0 }],
             state.pcm[if dac_sel[1] < u3:5 { dac_sel[1] } else { u3:1 }],
@@ -102,10 +108,11 @@ impl MegaBytebeat {
 
         send(tok, self.pcm_s, state.pcm);
         send(tok, self.dac_s, dacs);
-        write(self.state, State { adc: next_adc, bpm: next_bpm, t: next_t, pcm: next_pcm });
+        write(self.state, next_state);
     }
 }
 
+// wafer.space / Eurorack 5-channel mixed-signal core: 4x ADC + 5x DAC + sample-tick PCM.
 pub proc megabytebeat_core {
     en_r: chan<bool> in,
     bpm_r: chan<bool> in,
@@ -113,7 +120,8 @@ pub proc megabytebeat_core {
     adc_step_s: chan<u4> out,
     adc_params_s: chan<u16> out,
     pcm_s: chan<u8[5]> out,
-    state: ChipState,
+    dac_s: chan<u1[5]> out,
+    state: State,
 }
 
 impl megabytebeat_core {
@@ -124,6 +132,7 @@ impl megabytebeat_core {
         adc_step_s: chan<u4> out,
         adc_params_s: chan<u16> out,
         pcm_s: chan<u8[5]> out,
+        dac_s: chan<u1[5]> out,
     ) -> Self {
         Self {
             en_r,
@@ -132,10 +141,12 @@ impl megabytebeat_core {
             adc_step_s,
             adc_params_s,
             pcm_s,
-            state: ChipState {
+            dac_s,
+            state: State {
                 adc: adc_ramp::ADC_INIT_STATE,
                 bpm: bpm_sync::BPM_INIT_STATE,
                 t: u32:0,
+                pcm: u8[5]:[0, ...],
             },
         }
     }
@@ -147,17 +158,15 @@ impl megabytebeat_core {
         let (tok_a, adc_in) = recv(join(), self.adc_in_r);
         let tok = join(tok_e, tok_b, tok_a);
 
-        let (next_adc, step_eff, adc_vld, adc_params) =
-            adc_ramp::adc_ramp_step(state.adc, en, adc_in);
-        let (next_bpm, sample_tick, params) =
-            bpm_sync::bpm_sync_step(state.bpm, bpm_in, adc_params, adc_vld);
-        let pcm = MegaBytebeat::samples(state.t, params);
-        let next_t = if sample_tick { state.t + u32:1 } else { state.t };
+        let (next_state, step_eff, adc_vld, adc_params, sample_tick, next_pcm) =
+            MegaBytebeat::step(state, en, bpm_in, adc_in);
+        let dacs = dac::r2r_dac_bank<u32:5>(en, state.pcm);
 
         send(tok, self.adc_step_s, step_eff);
         send_if(tok, self.adc_params_s, adc_vld, adc_params);
-        send_if(tok, self.pcm_s, sample_tick, pcm);
-        write(self.state, ChipState { adc: next_adc, bpm: next_bpm, t: next_t });
+        send_if(tok, self.pcm_s, sample_tick, next_pcm);
+        send(tok, self.dac_s, dacs);
+        write(self.state, next_state);
     }
 }
 
@@ -250,6 +259,7 @@ proc megabytebeat_core_test {
     adc_step_r: chan<u4> in,
     adc_params_r: chan<u16> in,
     pcm_r: chan<u8[5]> in,
+    dac_r: chan<u1[5]> in,
 }
 
 impl megabytebeat_core_test {
@@ -260,48 +270,45 @@ impl megabytebeat_core_test {
         let (adc_step_s, adc_step_r) = chan<u4>("adc_step");
         let (adc_params_s, adc_params_r) = chan<u16>("adc_params");
         let (pcm_s, pcm_r) = chan<u8[5]>("pcm");
-        megabytebeat_core::new(en_r, bpm_r, adc_in_r, adc_step_s, adc_params_s, pcm_s).spawn();
-        Self { terminator, en_s, bpm_s, adc_in_s, adc_step_r, adc_params_r, pcm_r }
+        let (dac_s, dac_r) = chan<u1[5]>("dac");
+        megabytebeat_core::new(en_r, bpm_r, adc_in_r, adc_step_s, adc_params_s, pcm_s, dac_s)
+            .spawn();
+        Self { terminator, en_s, bpm_s, adc_in_s, adc_step_r, adc_params_r, pcm_r, dac_r }
     }
 
     fn next(self) {
-        let (tok, t_cnt) = for (i, (tok, t_cnt)): (u32, (token, u32)) in u32:0..u32:16 {
+        // Sweep 1 (16 ticks): virtual knobs [5, 1, 3, 0] -> 0x0315 on tick 15.
+        let (tok, t_cnt, held_pcm) = for (i, (tok, t_cnt, held_pcm)): (u32, (token, u32, u8[5])) in
+            u32:0..u32:16 {
             let tok = send(tok, self.en_s, true);
             let tok = send(tok, self.bpm_s, false);
             let tok = send(tok, self.adc_in_s, u4[4]:[5, 1, 3, 0]);
             let (tok, got_step) = recv(tok, self.adc_step_r);
+            let (tok, got_dac) = recv(tok, self.dac_r);
             assert_eq(got_step, i as u4);
-            let (tok, next_t) = if (i % u32:4) == u32:3 {
+            assert_eq(got_dac, dac::r2r_dac_bank<u32:5>(true, held_pcm));
+            let (tok, next_t, next_held) = if (i % u32:4) == u32:3 {
                 let (tok, got_pcm) = recv(tok, self.pcm_r);
                 let exp_params = if i == u32:15 { u16:0x0315 } else { u16:0x0a2a };
-                assert_eq(got_pcm, MegaBytebeat::samples(t_cnt, exp_params));
-                (tok, t_cnt + u32:1)
+                let exp = MegaBytebeat::samples(t_cnt, exp_params);
+                assert_eq(got_pcm, exp);
+                (tok, t_cnt + u32:1, exp)
             } else {
-                (tok, t_cnt)
+                (tok, t_cnt, held_pcm)
             };
-            (tok, next_t)
-        }((join(), u32:0));
+            (tok, next_t, next_held)
+        }((join(), u32:0, u8[5]:[0, ...]));
         let (tok, got_p1) = recv(tok, self.adc_params_r);
         assert_eq(got_p1, u16:0x0315);
 
-        let (tok, _) = for (i, (tok, t_cnt)): (u32, (token, u32)) in u32:0..u32:16 {
-            let tok = send(tok, self.en_s, true);
-            let tok = send(tok, self.bpm_s, false);
-            let tok = send(tok, self.adc_in_s, u4[4]:[10, 2, 10, 0]);
-            let (tok, got_step) = recv(tok, self.adc_step_r);
-            assert_eq(got_step, i as u4);
-            let (tok, next_t) = if (i % u32:4) == u32:3 {
-                let (tok, got_pcm) = recv(tok, self.pcm_r);
-                let exp_params = if i == u32:15 { u16:0x0a2a } else { u16:0x0315 };
-                assert_eq(got_pcm, MegaBytebeat::samples(t_cnt, exp_params));
-                (tok, t_cnt + u32:1)
-            } else {
-                (tok, t_cnt)
-            };
-            (tok, next_t)
-        }((tok, t_cnt));
-        let (tok, got_p2) = recv(tok, self.adc_params_r);
-        assert_eq(got_p2, u16:0x0a2a);
+        // Standby gating check: en=false clamps step to 0xF and all 5 DAC ladders to 0.
+        let tok = send(tok, self.en_s, false);
+        let tok = send(tok, self.bpm_s, false);
+        let tok = send(tok, self.adc_in_s, u4[4]:[10, 2, 10, 0]);
+        let (tok, got_step_off) = recv(tok, self.adc_step_r);
+        let (tok, got_dac_off) = recv(tok, self.dac_r);
+        assert_eq(got_step_off, u4:15);
+        assert_eq(got_dac_off, u1[5]:[0, ...]);
         send(tok, self.terminator, true);
     }
 }

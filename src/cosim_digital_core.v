@@ -66,7 +66,10 @@ module cosim_digital_core (
         ._adc_params_s_rdy(1'b1),
         ._pcm_s(pcm_bus),
         ._pcm_s_vld(pcm_vld),
-        ._pcm_s_rdy(1'b1)
+        ._pcm_s_rdy(1'b1),
+        ._dac_s(),
+        ._dac_s_vld(),
+        ._dac_s_rdy(1'b1)
     );
     assign adc_step = step_eff;
 
