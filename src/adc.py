@@ -34,7 +34,7 @@ def build_adc(
 
 
 def check_adc(adc: kf.DKCell, gds: Path, spice: Path, pins: list[str], out_dir: Path) -> None:
-    dac.check_r2r(adc, gds, spice, pins, out_dir)
+    analog.check_macro(adc, gds, spice, pins, out_dir)
     for corner, rcorner in (("typical", "res_typical"), ("ff", "res_ff"), ("ss", "res_ss")):
         (trips,) = analog.run_ngspice(SRC_DIR / "adc_ramp.spice", spice, corner, rcorner)
         _, dnl, inl = analog.check_linearity(trips, f"ADC {corner}")
@@ -51,7 +51,7 @@ def main() -> None:
     args = ap.parse_args()
 
     s, adc, pins = build_adc()
-    gds, _, _, spice = dac.emit_r2r(s, adc, pins, args.out_dir)
+    gds, _, _, spice = analog.emit_macro(s, adc, pins, args.out_dir)
     check_adc(adc, gds, spice, pins, args.out_dir)
     if args.render:
         png = analog.render_gds(gds, args.out_dir / f"{adc.name}.png", width=1600, height=900)
