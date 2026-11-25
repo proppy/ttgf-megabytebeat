@@ -78,9 +78,8 @@ impl adc_ramp {
         let (tok_a, adc_in) = recv(join(), self.adc_in_r);
         let tok = join(tok_e, tok_a);
         let (next_st, step_eff, emit_params, params) = adc_ramp_step(st, en, adc_in);
-        let tok_s = send(tok, self.step_s, step_eff);
-        let tok_p = send_if(tok, self.params_s, emit_params, params);
-        join(tok_s, tok_p);
+        send(tok, self.step_s, step_eff);
+        send_if(tok, self.params_s, emit_params, params);
         write(self.state, next_st);
     }
 }
