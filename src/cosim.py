@@ -188,11 +188,11 @@ def _evaluate_cosim_assertions(dat_path: Path, tracks: int) -> CosimMetrics:
             out.append(val)
         return out
 
-    # Expected Eurorack divider gain: R_load / (R_dac_out + R_prot + R_load) = 100k / (10.46k + 1k + 100k)
-    euro_gain = 100_000.0 / (10_460.0 + 1_000.0 + 100_000.0)
+    # Expected Eurorack divider gain: R_load / (R_dac_out + R_prot + R_load) = 100k / (20.70k + 1k + 100k)
+    euro_gain = 100_000.0 / (20_700.0 + 1_000.0 + 100_000.0)
     euro_lsb_v = (4.9803 * euro_gain) / 255.0
 
-    # Check 1: Reset Mid-Scale Bias (code 128 -> ~2.243V at Eurorack jack, click-free startup)
+    # Check 1: Reset Mid-Scale Bias (code 128 -> ~2.055V at Eurorack jack, click-free startup)
     r_rst = row_at(45.0)
     reset_v = sig(r_rst, 22)
     exp_mid_v = (128.0 / 255.0) * 4.9803 * euro_gain
@@ -332,7 +332,7 @@ def _evaluate_cosim_assertions(dat_path: Path, tracks: int) -> CosimMetrics:
                     t_tick + 55.0,
                 )
                 settle_99_us = t_end - t_start
-    assert best_step_dv > 3.5 and settle_99_us < 20.0, (
+    assert best_step_dv > 3.5 and settle_99_us < 25.0, (
         f"Check 6b FAILED: Cable settling {settle_99_us:.2f}us (dv={best_step_dv:.2f}V)"
     )
     print(

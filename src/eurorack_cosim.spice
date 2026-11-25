@@ -21,15 +21,15 @@ X_CMP vsum cmp vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_1
 
 .SUBCKT sc_r2r_dac_8bit vdd vss d7 d6 d5 d4 d3 d2 d1 d0 out
 X_TIEL lo vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__tiel
-X_TERM lo drv_term vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_12
-X_B0 d0 drv0 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_12
-X_B1 d1 drv1 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_12
-X_B2 d2 drv2 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_12
-X_B3 d3 drv3 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_12
-X_B4 d4 drv4 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_12
-X_B5 d5 drv5 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_12
-X_B6 d6 drv6 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_12
-X_B7 d7 drv7 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_12
+X_TERM lo drv_term vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B0 d0 drv0 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B1 d1 drv1 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B2 d2 drv2 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B3 d3 drv3 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B4 d4 drv4 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B5 d5 drv5 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B6 d6 drv6 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B7 d7 drv7 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
 XR2R vss drv_term drv7 drv6 drv5 drv4 drv3 drv2 drv1 drv0 out r2r_ladder_8bit
 .ENDS sc_r2r_dac_8bit
 
