@@ -21,8 +21,8 @@ if { [info exists ::env(MAX_CAPACITANCE_CONSTRAINT)] } {
 }
 
 set clocks [get_clocks clk]
-set dig_inputs [get_ports {uio_in[*] ena rst_n}]
-set dig_outputs [get_ports {uo_pwm[*] vdd_bb_hi_s vdd_bb_hi_e vss_lo_s vss_lo_e}]
+set dig_inputs [get_ports {ui_bpm uio_in[*] ena rst_n}]
+set dig_outputs [get_ports {uo_pwm[*] vdd_bb_hi_s vdd_bb_hi_e vss_lo_s vss_lo_w vss_lo_e}]
 set ana_ports [get_ports {ua[*]}]
 
 set_input_delay $input_delay_value -clock $clocks $dig_inputs

@@ -67,6 +67,24 @@ jobs:
           uv run python src/dac.py
           uv run python src/adc.py
 
+      - name: Verify Bresenham BPM / tap-tempo sync DSLX & SystemVerilog codegen (bpm_sync.x)
+        uses: ./.github/actions/xls-action
+        with:
+          xls-repo: proppy/xls
+          xls-version: v0.0.0-11264-g628b096fe
+          dslx-path: src/bpm_sync.x
+          dslx-top: bpm_sync
+          ir-path: /tmp/bpm_sync.ir
+          opt-ir-path: /tmp/bpm_sync.opt.ir
+          verilog-path: /tmp/bpm_sync.sv
+          verilog-module-name: bpm_sync
+          verilog-reset-signal-name: reset
+          use-system-verilog: true
+          clock-period-ps: 30517500
+          delay-model: gf180mcu_3v3
+          area-model: gf180mcu_3v3
+          artifact-name: xls-generated-bpm-sync
+
       - name: Generate SystemVerilog for megabytebeat
         uses: ./.github/actions/xls-action
         with:

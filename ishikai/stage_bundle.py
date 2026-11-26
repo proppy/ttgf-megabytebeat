@@ -10,6 +10,7 @@ from pathlib import Path
 
 REQUIRED_SRC_FILES = (
     "adc_ramp.x",
+    "bpm_sync.x",
     "bytebeat.x",
     "dac.x",
     "megabytebeat.x",
