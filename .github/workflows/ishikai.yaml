@@ -1,0 +1,203 @@
+name: ishikai
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      sync_fork:
+        description: "Push updated macro commit to proppy/wafer_space_RUN3_sample:megabytebeat-sync"
+        type: boolean
+        default: true
+
+jobs:
+  macro:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Generate Verilog for megabytebeat
+        uses: ./.github/actions/xls-action
+        with:
+          xls-version: v0.0.0-11174-g32dc47058
+          dslx-path: src/megabytebeat.x
+          dslx-top: megabytebeat
+          ir-path: src/megabytebeat.ir
+          opt-ir-path: src/megabytebeat.opt.ir
+          verilog-path: src/megabytebeat.v
+          verilog-module-name: megabytebeat
+          verilog-reset-signal-name: reset
+          use-system-verilog: false
+          clock-period-ps: 488281
+          delay-model: unit
+          artifact-name: xls-generated-megabytebeat-ishikai
+
+      - name: Setup GF180MCU PDK
+        uses: TinyTapeout/ciel-action@v1
+        with:
+          pdk_name: gf180mcuD
+          pdk_version: 792ef67037d74c8c51811eab3ce23cf793491296
+          pdk_root: ${{ runner.temp }}/pdk
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install LibreLane
+        run: pip install "librelane==3.0.17"
+
+      - name: Harden megabytebeat_macro (LibreLane Classic, VDD_BB)
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+        run: |
+          librelane \
+            -m "$PDK_ROOT" \
+            -m "$PWD" \
+            --docker-no-tty \
+            --dockerized \
+            --pdk gf180mcuD \
+            --pdk-root "$PDK_ROOT" \
+            --manual-pdk \
+            --scl gf180mcu_fd_sc_mcu7t5v0 \
+            --save-views-to ishikai/final \
+            ishikai/config.yaml
+
+      - name: Stage and validate drop-in bundle
+        run: |
+          python3 ishikai/stage_bundle.py \
+            --repo-root . \
+            --final-dir ishikai/final \
+            --out-dir ishikai/bundle \
+            --summary-file "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload ISHI-KAI macro bundle artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ishikai-megabytebeat-macro
+          path: ishikai/bundle
+
+  verify_and_sync:
+    needs: macro
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Download ISHI-KAI macro bundle
+        uses: actions/download-artifact@v7
+        with:
+          name: ishikai-megabytebeat-macro
+          path: ishikai_bundle
+
+      - name: Clone upstream ishi-kai/wafer_space_RUN3_sample
+        run: |
+          git clone --single-branch --branch main \
+            https://github.com/ishi-kai/wafer_space_RUN3_sample.git \
+            upstream_ishikai
+
+      - name: Drop updated megabytebeat_macro into upstream tree
+        run: |
+          rm -rf upstream_ishikai/chip/macros/megabytebeat
+          mkdir -p upstream_ishikai/chip/macros/megabytebeat
+          cp -a ishikai_bundle/. upstream_ishikai/chip/macros/megabytebeat/
+
+      - name: Setup GF180MCU PDK
+        uses: TinyTapeout/ciel-action@v1
+        with:
+          pdk_name: gf180mcuD
+          pdk_version: 792ef67037d74c8c51811eab3ce23cf793491296
+          pdk_root: ${{ runner.temp }}/pdk
+
+      - name: Install Icarus Verilog
+        run: sudo apt-get update && sudo apt-get install -y iverilog
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install cocotb
+        run: pip install -r test/requirements.txt
+
+      - name: Verify full chip_top cocotb RTL (GL=0)
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+          PDK: gf180mcuD
+          SLOT: 0p5x1
+          PAD: gf180mcu_fd_io
+          SCL: gf180mcu_fd_sc_mcu7t5v0
+          SRAM: gf180mcu_fd_ip_sram
+          GL: "0"
+        run: |
+          cd upstream_ishikai/chip/cocotb
+          python3 chip_top_tb.py
+          python3 -m cocotb_tools.check_results sim_build/results.xml
+
+      - name: Verify full chip_top cocotb Gate-Level (GL=1)
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+          PDK: gf180mcuD
+          SLOT: 0p5x1
+          PAD: gf180mcu_fd_io
+          SCL: gf180mcu_fd_sc_mcu7t5v0
+          SRAM: gf180mcu_fd_ip_sram
+          GL: "1"
+        run: |
+          cd upstream_ishikai/chip/cocotb
+          python3 chip_top_tb.py
+          python3 -m cocotb_tools.check_results sim_build/results.xml
+
+      - name: Sync megabytebeat-sync branch to proppy/wafer_space_RUN3_sample
+        if: >-
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'workflow_dispatch' && inputs.sync_fork != false)
+        env:
+          ISHIKAI_FORK_TOKEN: ${{ secrets.ISHIKAI_FORK_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_REPO: ${{ github.repository }}
+          FORK_REPO: proppy/wafer_space_RUN3_sample
+          UPSTREAM_REPO: ishi-kai/wafer_space_RUN3_sample
+          SYNC_BRANCH: megabytebeat-sync
+        run: |
+          if [ -z "$ISHIKAI_FORK_TOKEN" ]; then
+            {
+              echo "### ISHI会 Fork Sync Skipped"
+              echo ""
+              echo "Set repository secret \`ISHIKAI_FORK_TOKEN\` (fine-grained PAT with \`Contents: Read and write\` scoped to \`$FORK_REPO\`) to enable automatic sync pushes."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          SHORT_SHA="${SOURCE_SHA:0:7}"
+          SOURCE_SUBJECT="$(git log -1 --pretty=%s "$SOURCE_SHA")"
+
+          cd upstream_ishikai
+          # Clean cocotb build outputs before staging
+          git clean -fd chip/cocotb
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A chip/macros/megabytebeat
+          if git diff --cached --quiet; then
+            echo "No changes to chip/macros/megabytebeat; skipping push."
+            exit 0
+          fi
+
+          git commit -m "chore(megabytebeat): sync macro from ${SOURCE_REPO}@${SHORT_SHA}" \
+            -m "Source commit: https://github.com/${SOURCE_REPO}/commit/${SOURCE_SHA}" \
+            -m "Source message: ${SOURCE_SUBJECT}"
+
+          git push --force \
+            "https://x-access-token:${ISHIKAI_FORK_TOKEN}@github.com/${FORK_REPO}.git" \
+            "HEAD:refs/heads/${SYNC_BRANCH}"
+
+          PR_URL="https://github.com/${UPSTREAM_REPO}/compare/main...${FORK_REPO/\//:}:${SYNC_BRANCH}?expand=1"
+          {
+            echo "### ISHI会 Fork Synced"
+            echo ""
+            echo "- **Branch**: [\`${FORK_REPO}:${SYNC_BRANCH}\`](https://github.com/${FORK_REPO}/tree/${SYNC_BRANCH})"
+            echo "- **One-click PR**: [Open PR to \`${UPSTREAM_REPO}\`](${PR_URL})"
+          } >> "$GITHUB_STEP_SUMMARY"

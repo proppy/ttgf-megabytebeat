@@ -1,0 +1,62 @@
+meta:
+  version: 3
+  flow: Classic
+
+DESIGN_NAME: megabytebeat_macro
+VERILOG_FILES:
+  - dir::../src/megabytebeat.v
+  - dir::../src/pwm_audio.v
+  - dir::../src/tt_um_proppy_megabytebeat.v
+  - dir::megabytebeat_macro.sv
+
+# Separate VDD_BB power domain, shared VSS
+VDD_NETS:
+  - VDD_BB
+GND_NETS:
+  - VSS
+
+# Clock: 2.048 MHz (same as upstream ttgf-megabytebeat)
+CLOCK_PORT: clk
+CLOCK_PERIOD: 488
+
+# Floorplan: 960 x 960 um (~34% stdcell density for 5-track XLS megabytebeat)
+FP_SIZING: absolute
+DIE_AREA: [0, 0, 960, 960]
+CORE_AREA: [30, 30, 930, 930]
+FP_PIN_ORDER_CFG: dir::pin_order.cfg
+
+# Reserve Metal5 for PDN + chip_top VDD_BB power straps
+RT_MAX_LAYER: Metal4
+
+# PDN: clean Metal4 vertical + Metal5 horizontal grid & core ring with exposed pins
+PDN_CORE_RING: True
+PDN_CORE_RING_VWIDTH: 8
+PDN_CORE_RING_HWIDTH: 8
+PDN_CORE_RING_VSPACING: 2
+PDN_CORE_RING_HSPACING: 2
+PDN_CORE_RING_VOFFSET: 4
+PDN_CORE_RING_HOFFSET: 4
+PDN_VERTICAL_LAYER: Metal4
+PDN_HORIZONTAL_LAYER: Metal5
+PDN_VWIDTH: 4
+PDN_HWIDTH: 4
+PDN_VSPACING: 2
+PDN_HSPACING: 2
+PDN_VPITCH: 60
+PDN_HPITCH: 60
+PDN_ENABLE_PINS: True
+
+# Placement / routing tuning
+PL_TARGET_DENSITY_PCT: 50
+GRT_ALLOW_CONGESTION: True
+PL_RESIZER_HOLD_SLACK_MARGIN: 0.2
+GRT_RESIZER_HOLD_SLACK_MARGIN: 0.1
+RUN_HEURISTIC_DIODE_INSERTION: True
+
+# Signoff
+PRIMARY_GDSII_STREAMOUT_TOOL: klayout
+ERROR_ON_MAGIC_DRC: False
+LINTER_INCLUDE_PDK_MODELS: True
+RUN_KLAYOUT_XOR: True
+RUN_KLAYOUT_DRC: True
+RUN_LVS: True
