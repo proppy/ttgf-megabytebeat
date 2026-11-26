@@ -20,9 +20,9 @@ VDD_NETS:
 GND_NETS:
   - VSS
 
-# Clock: 2.048 MHz (same as upstream ttgf-megabytebeat)
+# Clock: 2.097152 MHz (= 64 * 32.768 kHz core tick = 256 * 8.192 kHz PWM)
 CLOCK_PORT: clk
-CLOCK_PERIOD: 488
+CLOCK_PERIOD: 477
 
 # Floorplan: 960 x 960 um (VDD_BB mixed-signal macro with 4x 4-bit ramp ADC + 2x 8-bit R-2R DAC)
 FP_SIZING: absolute

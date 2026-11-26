@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: © 2026 GNSS AFE + megabytebeat Authors
 # SPDX-License-Identifier: Apache-2.0
 #
-# Timing constraints for ISHI-KAI 5.0 V VDD_BB `megabytebeat_macro` (2.048 MHz, 4x ADC + 2x DAC).
+# Timing constraints for ISHI-KAI 5.0 V VDD_BB `megabytebeat_macro` (2.097152 MHz, 4x ADC + 2x DAC).
 # Excludes passive analog inout ports `ua[5:0]` from digital delay/load/driving-cell checks
 # and constrains `u_tt.u_core`'s /64 tick-enabled state registers as a 64-cycle multicycle path
 # while keeping `div64`, `ena_q`, and 5x `u_pwm*` strictly at 1 cycle.
@@ -21,7 +21,7 @@ if { [info exists ::env(MAX_CAPACITANCE_CONSTRAINT)] } {
 }
 
 set clocks [get_clocks clk]
-set dig_inputs [get_ports {ui_bpm uio_in[*] ena rst_n}]
+set dig_inputs [get_ports {ui_in[*] ena rst_n}]
 set dig_outputs [get_ports {uo_pwm[*] vdd_bb_hi_s vdd_bb_hi_e vss_lo_s vss_lo_w vss_lo_e}]
 set ana_ports [get_ports {ua[*]}]
 
