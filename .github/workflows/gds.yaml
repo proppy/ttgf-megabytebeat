@@ -85,13 +85,15 @@ jobs:
           uv run python src/dac.py --check-spef gen/final/spef --channels 2 --out-nets ua[4],ua[5]
           uv run python src/adc.py --check-spef gen/final/spef
 
-      - name: Upload passive DAC SPICE, Magic PEX & post-PnR SPEF for GL AMS co-sim
+      - name: Upload passive ADC/DAC SPICE, Magic PEX & post-PnR SPEF for GL AMS co-sim
         uses: actions/upload-artifact@v7
         with:
           name: dac-spice
           path: |
             gen/dac/r2r_ladder_8bit.spice
             gen/dac/r2r_ladder_8bit.pex.spice
+            gen/adc/r2r_ladder_4bit_sum.spice
+            gen/adc/r2r_ladder_4bit_sum.pex.spice
             gen/final/spef/**/*.spef
 
       - name: Publish TTGF26c custom GDS artifact

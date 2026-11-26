@@ -138,7 +138,7 @@
     "gf180mcu_fd_sc_mcu7t5v0__dlyd_2",
     "gf180mcu_fd_sc_mcu7t5v0__dlyd_4"
   ],
-  "RSZ_DONT_TOUCH_RX": ".*(u_tieh|u_tiel|u_term|u_buf|u_inv|u_cmp|u_r2r|term_tie|pre_drv|term_drv|in_drv|vsum|cmp_raw|^ua\\[).*",
+  "RSZ_DONT_TOUCH_RX": ".*(u_tieh|u_tiel|u_term|u_buf|u_inv|u_cmp|u_r2r|term_tie|pre_drv|term_drv|in_drv|vsum|cmp_lo|cmp_raw|^ua\\[).*",
   "DESIGN_REPAIR_BUFFER_INPUT_PORTS": true,
   "IGNORE_DISCONNECTED_MODULES": ["r2r_ladder_8bit", "r2r_ladder_4bit_sum"],
 
