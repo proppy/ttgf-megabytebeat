@@ -15,7 +15,8 @@ jobs:
       - name: Generate Verilog for megabytebeat
         uses: ./.github/actions/xls-action
         with:
-          xls-version: v0.0.0-11174-g32dc47058
+          xls-repo: proppy/xls
+          xls-version: v0.0.0-11264-g628b096fe
           dslx-path: src/megabytebeat.x
           dslx-top: megabytebeat
           ir-path: src/megabytebeat.ir
@@ -25,7 +26,8 @@ jobs:
           verilog-reset-signal-name: reset
           use-system-verilog: false
           clock-period-ps: 488281
-          delay-model: unit
+          delay-model: gf180mcu_3v3
+          area-model: gf180mcu_3v3
           artifact-name: xls-generated-megabytebeat
 
 

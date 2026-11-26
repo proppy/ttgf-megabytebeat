@@ -2,6 +2,11 @@ name: XLS
 description: generate (System)Verilog from DSLX.
 
 inputs:
+  xls-repo:
+    description: GitHub repository (owner/repo) providing XLS release tarballs.
+    required: false
+    type: string
+    default: 'proppy/xls'
   xls-version:
     description: version of the XLS release to use.
     required: true
@@ -43,9 +48,14 @@ inputs:
     required: true
     type: string
   delay-model:
-    description: model to use delay estimation.
+    description: model to use for delay estimation and scheduling.
     required: true
     type: string
+  area-model:
+    description: optional model to use for area estimation during IR optimization.
+    required: false
+    type: string
+    default: ''
   artifact-name:
     description: name of the generated xls artifact
     type: string
@@ -56,7 +66,7 @@ runs:
   steps:
     - name: install XLS
       run: |
-        curl --show-error --silent -L https://github.com/google/xls/releases/download/${{ inputs.xls-version }}/xls-${{ inputs.xls-version }}-linux-x64.tar.gz | tar xvzf - -C /tmp
+        curl --fail --show-error --silent -L "https://github.com/${{ inputs.xls-repo }}/releases/download/${{ inputs.xls-version }}/xls-${{ inputs.xls-version }}-linux-x64.tar.gz" | tar xvzf - -C /tmp
         echo "/tmp/xls-${{ inputs.xls-version }}-linux-x64" >> "$GITHUB_PATH"
       shell: bash
     - name: test DSLX
@@ -69,11 +79,30 @@ runs:
       shell: bash
     - name: optimize XLS IR
       run: |
-        opt_main ${{ inputs.ir-path }} > ${{ inputs.opt-ir-path }}
+        OPT_ARGS=(--delay_model="${{ inputs.delay-model }}")
+        if [[ -n "${{ inputs.area-model }}" ]]; then
+          OPT_ARGS+=(--area_model="${{ inputs.area-model }}")
+        fi
+        opt_main "${OPT_ARGS[@]}" ${{ inputs.ir-path }} > ${{ inputs.opt-ir-path }}
       shell: bash
     - name: generate Verilog
       run: |
-        codegen_main --module_name=${{ inputs.verilog-module-name }} --use_system_verilog=${{ inputs.use-system-verilog }} --clock_period_ps=${{ inputs.clock-period-ps }} --delay_model=${{ inputs.delay-model }} --reset=${{ inputs.verilog-reset-signal-name }} ${{ inputs.opt-ir-path }} > ${{ inputs.verilog-path }}
+        codegen_main \
+          --module_name=${{ inputs.verilog-module-name }} \
+          --use_system_verilog=${{ inputs.use-system-verilog }} \
+          --clock_period_ps=${{ inputs.clock-period-ps }} \
+          --delay_model=${{ inputs.delay-model }} \
+          --reset=${{ inputs.verilog-reset-signal-name }} \
+          --output_schedule_path=${{ inputs.opt-ir-path }}.sched \
+          ${{ inputs.opt-ir-path }} > ${{ inputs.verilog-path }}
+      shell: bash
+    - name: report scheduled delay
+      run: |
+        delay_info_main \
+          --delay_model=${{ inputs.delay-model }} \
+          --schedule_path=${{ inputs.opt-ir-path }}.sched \
+          ${{ inputs.opt-ir-path }} > ${{ inputs.opt-ir-path }}.delay
+        head -n 40 ${{ inputs.opt-ir-path }}.delay
       shell: bash
     - name: upload XLS artifacts
       uses: actions/upload-artifact@v7
@@ -82,4 +111,6 @@ runs:
         path: |
           ${{ inputs.ir-path }}
           ${{ inputs.opt-ir-path }}
+          ${{ inputs.opt-ir-path }}.sched
+          ${{ inputs.opt-ir-path }}.delay
           ${{ inputs.verilog-path }}
