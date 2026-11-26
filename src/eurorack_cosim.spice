@@ -1,0 +1,108 @@
+* Deterministic Eurorack + GF180MCU Padring Full-Chip Mixed-Signal Co-Simulation
+* Expects env.spice (PDK models, I/O pads, canonical ADC/DAC subckts, cv_r_src param)
+* and d_cosim_inst.spice (Verilator d_cosim bridges + adut) in CWD.
+.temp 27
+.option method=trap reltol=1e-3 vntol=1e-4 abstol=1e-9
+
+.include env.spice
+.include d_cosim_inst.spice
+
+* Structural converter wrappers matching src/sc_adc_ramp_1ch_4b.v and src/sc_r2r_dac_8bit.v
+.SUBCKT sc_adc_ramp_1ch_4b vdd vss s3 s2 s1 s0 adc_in cmp
+X_TIEH hi vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__tieh
+X_TERM hi drv_term vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
+X_I0 s0 drv0 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
+X_I1 s1 drv1 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
+X_I2 s2 drv2 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
+X_I3 s3 drv3 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
+XR2R vss drv_term drv3 drv2 drv1 drv0 vsum adc_in r2r_ladder_4bit_sum
+X_CMP vsum cmp vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_1
+.ENDS sc_adc_ramp_1ch_4b
+
+* Shared PCB 5.00V supply + lumped bondwire/padring resistance (0.15 ohm on VDD & VSS)
+VSUP vdd_pcb 0 5.0
+VGND vss_pcb 0 0.0
+R_BOND_VDD vdd_pcb vdd_core 0.15
+R_BOND_VSS vss_pcb vss_core 0.15
+C_ONCHIP_DECAP vdd_core vss_core 100p
+V_IO_VDD vdd_io 0 5.0
+V_IO_VSS vss_io 0 0.0
+
+* Digital I/O Pads: 3x Foundry Schmitt-Trigger Pads (gf180mcu_fd_io__in_s)
+* 1) 32.768 kHz external clock (T = 30.517578 us)
+V_CLK_JACK jack_clk 0 PULSE(0 5.0 15u 20n 20n 15.25u 30.517578u)
+R_CLK_PROT jack_clk pad_clk 1k
+XPAD_CLK vdd_io vss_io pad_clk vss_io vss_io vdd_core vss_core clk_core gf180mcu_fd_io__in_s
+
+* 2) Active-low synchronous reset jack (held low 0..50us, then released high)
+V_RST_JACK jack_rst_n 0 PWL(0 0.0  50u 0.0  50.1u 5.0)
+R_RST_PROT jack_rst_n pad_rst_n 1k
+XPAD_RST vdd_io vss_io pad_rst_n vss_io vss_io vdd_core vss_core rst_n_core gf180mcu_fd_io__in_s
+
+* 3) Eurorack Bipolar LFO/Clock (-5.0V to +8.0V slow triangle) -> 10k PCB protection -> Schmitt pad
+V_BPM_JACK jack_bpm 0 PWL(0 -5.0  350u 8.0  700u -5.0  1150u 8.0  1600u -5.0  2100u -5.0)
+R_BPM_PROT jack_bpm pad_bpm 10k
+XPAD_BPM vdd_io vss_io pad_bpm vss_io vss_io vdd_core vss_core bpm_core gf180mcu_fd_io__in_s
+
+* 4) Four Eurorack 0..5V CV Inputs:
+*    - Sweep 1 & Sweep 2 (0..1080us):  CV = [1.60V (5), 0.35V (1), 0.65V (2), 0.05V (0)]
+*    - Mid-run step at t=1080us:       CV0 stays FIXED at 1.60V (5) while CV1..3 slam to [3.00V (10), 1.30V (4), 4.80V (15)]
+V_CV0 cv_0 0 1.60
+V_CV1 cv_1 0 PWL(0 0.35  1080u 0.35  1080.2u 3.00)
+V_CV2 cv_2 0 PWL(0 0.65  1080u 0.65  1080.2u 1.30)
+V_CV3 cv_3 0 PWL(0 0.05  1080u 0.05  1080.2u 4.80)
+R_CV0 cv_0 pad_adc_0 {cv_r_src}
+R_CV1 cv_1 pad_adc_1 {cv_r_src}
+R_CV2 cv_2 pad_adc_2 {cv_r_src}
+R_CV3 cv_3 pad_adc_3 {cv_r_src}
+
+* 4x Foundry asig_5p0 pads + 4x sc_adc_ramp_1ch_4b (VDD VSS step[3..0] adc_in cmp)
+XPAD_ADC0 pad_adc_0 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
+XPAD_ADC1 pad_adc_1 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
+XPAD_ADC2 pad_adc_2 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
+XPAD_ADC3 pad_adc_3 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
+
+XADC0 vdd_core vss_core a_adc_step_3 a_adc_step_2 a_adc_step_1 a_adc_step_0 pad_adc_0 cmp_a_0 sc_adc_ramp_1ch_4b
+XADC1 vdd_core vss_core a_adc_step_3 a_adc_step_2 a_adc_step_1 a_adc_step_0 pad_adc_1 cmp_a_1 sc_adc_ramp_1ch_4b
+XADC2 vdd_core vss_core a_adc_step_3 a_adc_step_2 a_adc_step_1 a_adc_step_0 pad_adc_2 cmp_a_2 sc_adc_ramp_1ch_4b
+XADC3 vdd_core vss_core a_adc_step_3 a_adc_step_2 a_adc_step_1 a_adc_step_0 pad_adc_3 cmp_a_3 sc_adc_ramp_1ch_4b
+
+* 5x Foundry asig_5p0 pads + 5x sc_r2r_dac_8bit_ch0..4 (VDD VSS d[7..0] out) + Doepfer A-100 loads (1k -> 220pF || 100k)
+XPAD_DAC0 pad_dac_0 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
+XPAD_DAC1 pad_dac_1 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
+XPAD_DAC2 pad_dac_2 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
+XPAD_DAC3 pad_dac_3 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
+XPAD_DAC4 pad_dac_4 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
+
+XDAC0 vdd_core vss_core a_dac_d_0_7 a_dac_d_0_6 a_dac_d_0_5 a_dac_d_0_4 a_dac_d_0_3 a_dac_d_0_2 a_dac_d_0_1 a_dac_d_0_0 pad_dac_0 sc_r2r_dac_8bit_ch0
+XDAC1 vdd_core vss_core a_dac_d_1_7 a_dac_d_1_6 a_dac_d_1_5 a_dac_d_1_4 a_dac_d_1_3 a_dac_d_1_2 a_dac_d_1_1 a_dac_d_1_0 pad_dac_1 sc_r2r_dac_8bit_ch1
+XDAC2 vdd_core vss_core a_dac_d_2_7 a_dac_d_2_6 a_dac_d_2_5 a_dac_d_2_4 a_dac_d_2_3 a_dac_d_2_2 a_dac_d_2_1 a_dac_d_2_0 pad_dac_2 sc_r2r_dac_8bit_ch2
+XDAC3 vdd_core vss_core a_dac_d_3_7 a_dac_d_3_6 a_dac_d_3_5 a_dac_d_3_4 a_dac_d_3_3 a_dac_d_3_2 a_dac_d_3_1 a_dac_d_3_0 pad_dac_3 sc_r2r_dac_8bit_ch3
+XDAC4 vdd_core vss_core a_dac_d_4_7 a_dac_d_4_6 a_dac_d_4_5 a_dac_d_4_4 a_dac_d_4_3 a_dac_d_4_2 a_dac_d_4_1 a_dac_d_4_0 pad_dac_4 sc_r2r_dac_8bit_ch4
+
+R_EURO_PROT0 pad_dac_0 euro_out_0 1k
+C_CABLE0 euro_out_0 0 220p
+R_EURO_LOAD0 euro_out_0 0 100k
+
+R_EURO_PROT1 pad_dac_1 euro_out_1 1k
+C_CABLE1 euro_out_1 0 220p
+R_EURO_LOAD1 euro_out_1 0 100k
+
+R_EURO_PROT2 pad_dac_2 euro_out_2 1k
+C_CABLE2 euro_out_2 0 220p
+R_EURO_LOAD2 euro_out_2 0 100k
+
+R_EURO_PROT3 pad_dac_3 euro_out_3 1k
+C_CABLE3 euro_out_3 0 220p
+R_EURO_LOAD3 euro_out_3 0 100k
+
+R_EURO_PROT4 pad_dac_4 euro_out_4 1k
+C_CABLE4 euro_out_4 0 220p
+R_EURO_LOAD4 euro_out_4 0 100k
+
+.control
+tran 1u 2080u
+wrdata eurorack_cosim.dat v(pad_bpm) v(bpm_core) i(V_BPM_JACK) v(vdd_core) v(vss_core) v(a_dbg_sample_tick) v(a_dbg_a_3) v(a_dbg_a_2) v(a_dbg_a_1) v(a_dbg_a_0) v(a_dbg_b_3) v(a_dbg_b_2) v(a_dbg_b_1) v(a_dbg_b_0) v(a_dbg_c_3) v(a_dbg_c_2) v(a_dbg_c_1) v(a_dbg_c_0) v(a_dbg_d_3) v(a_dbg_d_2) v(a_dbg_d_1) v(a_dbg_d_0) v(euro_out_0) v(euro_out_1) v(euro_out_2) v(euro_out_3) v(euro_out_4)
+quit
+.endc
+.end

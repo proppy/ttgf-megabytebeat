@@ -18,10 +18,10 @@ jobs:
       - name: Setup Verilator
         uses: ./.github/actions/setup-verilator
 
-      - name: Install ngspice and libngspice0
+      - name: Install ngspice, libngspice0, and Icarus Verilog
         run: |
           sudo apt-get update
-          sudo apt-get install -y ngspice libngspice0
+          sudo apt-get install -y ngspice libngspice0 iverilog
 
       - name: Setup GF180MCU PDK
         uses: TinyTapeout/ciel-action@v1
@@ -60,13 +60,6 @@ jobs:
           ffi-fallback-delay-ps: 500
           artifact-name: xls-generated-adc-ramp
 
-      - name: Verify R-2R ladder, 8-bit DAC & 4-bit Ramp ADC (DRC, LVS, Magic PEX, PVT ngspice, render)
-        env:
-          PDK_ROOT: ${{ runner.temp }}/pdk
-        run: |
-          uv run python src/dac.py
-          uv run python src/adc.py
-
       - name: Verify Bresenham BPM / tap-tempo sync DSLX & SystemVerilog codegen (bpm_sync.x)
         uses: ./.github/actions/xls-action
         with:
@@ -84,6 +77,16 @@ jobs:
           delay-model: gf180mcu_3v3
           area-model: gf180mcu_3v3
           artifact-name: xls-generated-bpm-sync
+
+      - name: Verify analog macros (DRC/LVS/PEX/PVT/render) & full-chip RTL sim (chip.py)
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+        run: uv run python src/chip.py --tracks 5 --sim
+
+      - name: Verify closed-loop Eurorack mixed-signal co-simulation (ngspice d_cosim + Verilator + Magic PEX)
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+        run: uv run python src/cosim.py --gen-dir gen --tracks 5 --cv-r-src 100
 
       - name: Generate SystemVerilog for megabytebeat
         uses: ./.github/actions/xls-action
