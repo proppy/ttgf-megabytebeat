@@ -197,7 +197,7 @@ index af7c0fe..416c547 100644
 -    dut.bb_uio_PAD.value = (d << 4) | c
 +    # Inject analog CV params a=0x5, b=0x2, c=0x3, d=0x1 via external bb_ua_PAD[3:0]
 +    cv_targets = [0x5, 0x2, 0x3, 0x1]
-+    init_params = (0xA, 0x2, 0xA, 0x0)  # SYNTH_INIT_STATE 0x0a2a before first 16-step ADC sweep
++    init_params = (0xA, 0x2, 0xA, 0x0)  # initial State.params 0x0a2a before first 16-step ADC sweep
  
 -    # Over each 256-cycle frame (starting immediately after reset deassertion on falling edge,
 -    # sampling after each posedge when pwm updates for count=0..255), high-cycle count == sample(t)!
@@ -225,7 +225,7 @@ index af7c0fe..416c547 100644
 +                dac_codes = _read_ladder_codes(dac_ladders)
 +                dac_pad_msbs = _read_dac_pad_msbs(dut)
 +
-+        # Frame 0 holds SYNTH_INIT_STATE pcm=[0..0]; Frame f>=1 holds eval_tracks(f-1, params)
++        # Frame 0 holds initial State.pcm=[0..0]; Frame f>=1 holds MegaBytebeat::samples(f-1, params)
 +        # First 16-step ADC sweep completes on tick 15 (end of Frame 3), taking effect on Frame 4.
 +        if frame_idx == 0:
 +            exp = [0, 0, 0, 0, 0]

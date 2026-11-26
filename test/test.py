@@ -185,7 +185,7 @@ async def test_end_to_end_mixed_signal(dut):
         dut.rst_n.value = 1
         await RisingEdge(dut.clk)
 
-        # Frame 0 (cyc 0..255): reset SynthState.pcm = 0; tick 3 latches t=0 (0x0a2a) at end of frame 0.
+        # Frame 0 (cyc 0..255): reset State.pcm = 0; tick 3 latches t=0 (0x0a2a) at end of frame 0.
         # Frames 1..3: t=0,1,2 with init params (10,2,10,0).
         # Tick 15 (end of frame 3) latches CV1=(5,1,3,0) -> frames 4..7: t=3..6 with (5,1,3,0).
         # At start of frame 4, switch analog CV to CV2=(10,2,10,0) & switch DAC track selectors to (0,4).

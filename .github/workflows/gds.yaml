@@ -19,7 +19,7 @@ jobs:
           xls-repo: proppy/xls
           xls-version: v0.0.0-11264-g628b096fe
           dslx-path: src/megabytebeat.x
-          dslx-top: megabytebeat
+          dslx-top: MegaBytebeat
           ir-path: src/megabytebeat.ir
           opt-ir-path: src/megabytebeat.opt.ir
           verilog-path: src/megabytebeat.sv

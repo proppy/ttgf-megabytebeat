@@ -53,12 +53,6 @@ module tt_um_proppy_megabytebeat (
         ._dac_sel_r(uio_in[5:0]),
         ._dac_sel_r_vld(tick_en),
         ._dac_sel_r_rdy(),
-        ._adc_step_s(),
-        ._adc_step_s_vld(),
-        ._adc_step_s_rdy(1'b1),
-        ._adc_params_s(),
-        ._adc_params_s_vld(),
-        ._adc_params_s_rdy(1'b1),
         ._pcm_s(pcm_bus),
         ._pcm_s_vld(),
         ._pcm_s_rdy(1'b1),
@@ -67,7 +61,7 @@ module tt_um_proppy_megabytebeat (
         ._dac_s_rdy(1'b1)
     );
 
-    // 5x 8-bit PWM audio outputs on uo_out[{7,3,2,1,0}] directly from registered SynthState.pcm
+    // 5x 8-bit PWM audio outputs on uo_out[{7,3,2,1,0}] directly from registered State.pcm
     pwm_audio u_pwm0 (.clk(clk), .rst_n(rst_n), .sample(pcm_bus[7:0]),   .pwm(uo_out[0]));
     pwm_audio u_pwm1 (.clk(clk), .rst_n(rst_n), .sample(pcm_bus[15:8]),  .pwm(uo_out[1]));
     pwm_audio u_pwm2 (.clk(clk), .rst_n(rst_n), .sample(pcm_bus[23:16]), .pwm(uo_out[2]));
