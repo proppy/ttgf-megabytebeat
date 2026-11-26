@@ -6,7 +6,7 @@ project:
   description:  "Best-of compilation of bytebeat 2011's greatest hits on-a-chip."
   language:     "xls"
   clock_hz:     2048000  # 8000 * 256
-  tiles: "3x2"
+  tiles: "2x2"
   top_module:  "tt_um_proppy_megabytebeat"
   source_files:
     - "tt_um_proppy_megabytebeat.v"
