@@ -56,6 +56,11 @@ inputs:
     required: false
     type: string
     default: ''
+  codegen-extra-args:
+    description: extra arguments passed to codegen_main.
+    required: false
+    type: string
+    default: ''
   artifact-name:
     description: name of the generated xls artifact
     type: string
@@ -94,15 +99,21 @@ runs:
           --delay_model=${{ inputs.delay-model }} \
           --reset=${{ inputs.verilog-reset-signal-name }} \
           --output_schedule_path=${{ inputs.opt-ir-path }}.sched \
+          --output_schedule_ir_path=${{ inputs.opt-ir-path }}.sched.ir \
+          ${{ inputs.codegen-extra-args }} \
           ${{ inputs.opt-ir-path }} > ${{ inputs.verilog-path }}
       shell: bash
     - name: report scheduled delay
       run: |
-        delay_info_main \
+        if delay_info_main \
           --delay_model=${{ inputs.delay-model }} \
           --schedule_path=${{ inputs.opt-ir-path }}.sched \
-          ${{ inputs.opt-ir-path }} > ${{ inputs.opt-ir-path }}.delay
-        head -n 40 ${{ inputs.opt-ir-path }}.delay
+          ${{ inputs.opt-ir-path }}.sched.ir > ${{ inputs.opt-ir-path }}.delay 2>&1; then
+          head -n 40 ${{ inputs.opt-ir-path }}.delay
+        else
+          echo "Note: delay_info_main skipped (unsupported FFI/invoke node in delay model):"
+          head -n 10 ${{ inputs.opt-ir-path }}.delay
+        fi
       shell: bash
     - name: upload XLS artifacts
       uses: actions/upload-artifact@v7

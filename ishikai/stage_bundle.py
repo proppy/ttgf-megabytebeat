@@ -10,12 +10,23 @@ from pathlib import Path
 
 REQUIRED_SRC_FILES = (
     "bytebeat.x",
+    "dac.x",
     "megabytebeat.x",
     "megabytebeat.ir",
     "megabytebeat.opt.ir",
     "megabytebeat.v",
     "pwm_audio.v",
+    "r2r_ladder_8bit.v",
+    "sc_r2r_dac_8bit.v",
     "tt_um_proppy_megabytebeat.v",
+)
+
+REQUIRED_MACRO_FILES = (
+    "dac/r2r_ladder_8bit.gds",
+    "dac/r2r_ladder_8bit.lef",
+    "dac/r2r_ladder_8bit.lib",
+    "dac/r2r_ladder_8bit.spice",
+    "dac/r2r_ladder_8bit.pex.spice",
 )
 
 FINAL_VIEW_ENTRIES = (
@@ -67,22 +78,26 @@ def _get_antenna_violations(metrics: dict) -> int | None:
 
 
 def rewrite_config_for_ishikai(config_text: str) -> str:
-    """Rewrite dir::../src/* and dir::megabytebeat_macro.sv to dir::src/* for chip/macros/."""
+    """Rewrite dir::../src/*, dir::../gen/*, and dir::megabytebeat_macro.sv for chip/macros/."""
     rewritten = config_text.replace("dir::../src/", "dir::src/")
+    rewritten = rewritten.replace("dir::../gen/", "dir::macros/")
     rewritten = rewritten.replace("dir::megabytebeat_macro.sv", "dir::src/megabytebeat_macro.sv")
     return rewritten
 
 
 def stage_bundle(repo_root: Path, final_dir: Path, out_dir: Path) -> dict:
-    """Copy sources, config, pin order, and LibreLane final views into a drop-in directory."""
+    """Copy sources, analog sub-macros, config, pin order, SDC, and final views into bundle."""
     src_dir = repo_root / "src"
+    gen_dir = repo_root / "gen"
     ishikai_dir = repo_root / "ishikai"
 
     if out_dir.exists():
         shutil.rmtree(out_dir)
     bundle_src = out_dir / "src"
+    bundle_macros = out_dir / "macros"
     bundle_final = out_dir / "final"
     bundle_src.mkdir(parents=True)
+    bundle_macros.mkdir(parents=True)
     bundle_final.mkdir(parents=True)
 
     for name in REQUIRED_SRC_FILES:
@@ -91,7 +106,16 @@ def stage_bundle(repo_root: Path, final_dir: Path, out_dir: Path) -> dict:
             raise FileNotFoundError(f"Missing required source file: {path}")
         shutil.copy2(path, bundle_src / name)
 
+    for rel in REQUIRED_MACRO_FILES:
+        path = gen_dir / rel
+        if not path.is_file():
+            raise FileNotFoundError(f"Missing required analog macro file: {path}")
+        dst = bundle_macros / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, dst)
+
     shutil.copy2(ishikai_dir / "megabytebeat_macro.sv", bundle_src / "megabytebeat_macro.sv")
+    shutil.copy2(ishikai_dir / "megabytebeat_macro.sdc", out_dir / "megabytebeat_macro.sdc")
     shutil.copy2(ishikai_dir / "pin_order.cfg", out_dir / "pin_order.cfg")
 
     config_text = (ishikai_dir / "config.yaml").read_text(encoding="utf-8")

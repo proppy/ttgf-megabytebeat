@@ -1,0 +1,25 @@
+name: Setup KLayout
+description: Install official KLayout binary package matching the LibreLane container version.
+
+inputs:
+  klayout-version:
+    description: KLayout version from klayout.org Ubuntu-24 downloads (matches LibreLane 3.0.17).
+    required: false
+    default: "0.30.7"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install KLayout ${{ inputs.klayout-version }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        KL_VER="${{ inputs.klayout-version }}"
+        DEB_PATH="${RUNNER_TEMP}/klayout_${KL_VER}-1_amd64.deb"
+        curl -fsSL \
+          "https://www.klayout.org/downloads/Ubuntu-24/klayout_${KL_VER}-1_amd64.deb" \
+          -o "${DEB_PATH}"
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq "${DEB_PATH}"
+        rm -f "${DEB_PATH}"
+        klayout -v

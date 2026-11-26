@@ -13,7 +13,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Generate Verilog for megabytebeat
+      - name: Generate SystemVerilog for megabytebeat
         uses: ./.github/actions/xls-action
         with:
           xls-repo: proppy/xls
@@ -22,18 +22,80 @@ jobs:
           dslx-top: megabytebeat
           ir-path: src/megabytebeat.ir
           opt-ir-path: src/megabytebeat.opt.ir
-          verilog-path: src/megabytebeat.v
+          verilog-path: src/megabytebeat.sv
           verilog-module-name: megabytebeat
           verilog-reset-signal-name: reset
-          use-system-verilog: false
+          use-system-verilog: true
           clock-period-ps: 488281
           delay-model: gf180mcu_3v3
           area-model: gf180mcu_3v3
+          codegen-extra-args: --ffi_fallback_delay_ps=500 --generator=pipeline --pipeline_stages=1 --flop_inputs=false --flop_outputs=false --reset_active_low=false --reset_asynchronous=false --reset_data_path=true
           artifact-name: xls-generated-megabytebeat
 
-      - name: Build GDS
-        uses: TinyTapeout/tt-gds-action@ttgf26c
+      - name: Setup GF180MCU PDK
+        uses: TinyTapeout/ciel-action@v1
         with:
+          pdk_name: gf180mcuD
+          pdk_version: 0fe599b2afb6708d281543108caf8310912f54af
+          pdk_root: ${{ runner.temp }}/pdk
+
+      - name: Setup KLayout
+        uses: ./.github/actions/setup-klayout
+
+      - name: Setup Magic
+        uses: ./.github/actions/setup-magic
+
+      - name: Install ngspice
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ngspice
+
+      - name: Setup uv & Python 3.12
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Build & verify passive r2r_ladder_8bit macro & harden 3x2 analog tile
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+        run: |
+          uv run python src/dac.py --out-dir gen/dac
+          curl -fsSL \
+            https://raw.githubusercontent.com/TinyTapeout/tt-support-tools/main/tech/gf180mcuD/def/analog/tt_analog_3x2.def \
+            -o gen/tt_analog_3x2.def
+          uv run librelane \
+            -m "$PDK_ROOT" \
+            -m "$PWD" \
+            --docker-no-tty \
+            --dockerized \
+            --pdk gf180mcuD \
+            --pdk-root "$PDK_ROOT" \
+            --manual-pdk \
+            --scl gf180mcu_fd_sc_mcu7t5v0 \
+            --save-views-to gen/final \
+            src/config.json
+          uv run python src/tools.py --tools magic,klayout --verify-librelane
+          uv run python src/dac.py --check-spef gen/final/spef
+
+      - name: Upload passive DAC SPICE, Magic PEX & post-PnR SPEF for GL AMS co-sim
+        uses: actions/upload-artifact@v7
+        with:
+          name: dac-spice
+          path: |
+            gen/dac/r2r_ladder_8bit.spice
+            gen/dac/r2r_ladder_8bit.pex.spice
+            gen/final/spef/**/*.spef
+
+      - name: Publish TTGF26c custom GDS artifact
+        uses: TinyTapeout/tt-gds-action/custom_gds@ttgf26c
+        with:
+          top_module: tt_um_proppy_megabytebeat
+          gds_path: gen/final/gds/tt_um_proppy_megabytebeat.gds
+          lef_path: gen/final/lef/tt_um_proppy_megabytebeat.lef
+          verilog_path: gen/final/pnl/tt_um_proppy_megabytebeat.pnl.v
           pdk: gf180mcuD
 
   precheck:
@@ -52,8 +114,75 @@ jobs:
         with:
           submodules: recursive
 
-      - name: GL test
-        uses: TinyTapeout/tt-gds-action/gl_test@ttgf26c
+      - name: Download GDS artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: tt_submission
+
+      - name: Download passive DAC SPICE & post-PnR SPEF
+        uses: actions/download-artifact@v7
+        with:
+          name: dac-spice
+          path: gen
+
+      - name: Setup GF180MCU PDK
+        uses: TinyTapeout/ciel-action@v1
+        with:
+          pdk_name: gf180mcuD
+          pdk_version: 0fe599b2afb6708d281543108caf8310912f54af
+          pdk_root: ${{ runner.temp }}/pdk
+
+      - name: Setup python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Python packages
+        run: pip install -r test/requirements.txt
+
+      - name: Install Icarus Verilog and libngspice0
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog libngspice0
+
+      - name: Setup Verilator
+        uses: ./.github/actions/setup-verilator
+
+      - name: Verify native tool versions match LibreLane
+        run: python src/tools.py --tools verilator
+
+      - name: Run GL tests (4-state Icarus + Verilator + ngspice AMS)
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+          AMS_NGSPICE: "1"
+        run: |
+          cp tt_submission/*.v test/gate_level_netlist.v
+          cd test
+          rm -f tb.vcd tb.fst results.xml
+          make clean
+          GATES=yes SIM=icarus COCOTB_TEST_FILTER="test_bytebeat" make
+          python -m cocotb_tools.check_results results.xml
+          rm -f tb.vcd tb.fst results.xml
+          make clean
+          GATES=yes SIM=verilator make
+          python -m cocotb_tools.check_results results.xml
+
+      - name: Upload Waveform and Test Results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gatelevel_test_results
+          path: |
+            test/tb.vcd
+            test/tb.fst
+            test/results.xml
+            test/output/*
+
+      - name: Test Summary
+        if: always()
+        uses: test-summary/action@v2.6
+        with:
+          paths: test/results.xml
 
   viewer:
     needs: gds

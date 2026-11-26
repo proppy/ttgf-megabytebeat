@@ -1,0 +1,50 @@
+name: Setup Magic
+description: Build and cache native Magic VLSI matching the LibreLane container version for GF180MCU PEX.
+
+inputs:
+  magic-version:
+    description: Magic release tag from RTimothyEdwards/magic (matches LibreLane 3.0.17).
+    required: false
+    default: "8.3.623"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cache native Magic ${{ inputs.magic-version }}
+      id: cache-magic
+      uses: actions/cache@v4
+      with:
+        path: ~/.local/magic-${{ inputs.magic-version }}
+        key: magic-${{ runner.os }}-ubuntu-24.04-${{ inputs.magic-version }}
+
+    - name: Install Magic ${{ inputs.magic-version }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        MAGIC_VER="${{ inputs.magic-version }}"
+        MAGIC_DIR="${HOME}/.local/magic-${MAGIC_VER}"
+        sudo apt-get update -qq
+        if [ -x "${MAGIC_DIR}/bin/magic" ]; then
+          sudo apt-get install -y -qq tcl tk libx11-6
+        else
+          sudo apt-get install -y -qq tcl-dev tk-dev libx11-dev m4
+          SRC_DIR="$(mktemp -d)"
+          trap 'rm -rf "${SRC_DIR}"' EXIT
+          curl -fsSL \
+            "https://github.com/RTimothyEdwards/magic/archive/refs/tags/${MAGIC_VER}.tar.gz" \
+            | tar -xz --strip-components=1 -C "${SRC_DIR}"
+          sed -i "s@\`git rev-parse HEAD\`@${MAGIC_VER}@" "${SRC_DIR}/scripts/defs.mak.in"
+          (
+            cd "${SRC_DIR}"
+            ./configure \
+              --prefix="${MAGIC_DIR}" \
+              --with-cairo=no \
+              --with-opengl=no \
+              --disable-werror
+            make database/database.h
+            make -j"$(nproc)"
+            make install
+          )
+        fi
+        echo "${MAGIC_DIR}/bin" >> "${GITHUB_PATH}"
+        "${MAGIC_DIR}/bin/magic" --version

@@ -1,0 +1,39 @@
+* 256-code DC linearity & standby sweep on passive r2r_ladder_8bit + 9x clkbuf_20 drivers
+* Expects env.spice in CWD defining PDK corner models, vdd param, 7t5v0 stdcells, and r2r_ladder_8bit.
+.include env.spice
+
+VDD vdd 0 {vdd}
+VSS vss 0 0.0
+VCODE vcode 0 0.0
+
+* Decode integer code v(vcode) = 0..255 into 8 logic bits matching src/sc_r2r_dac_8bit.v
+B_D0 d0 0 V = (floor(floor(v(vcode)+0.5)/1)   - 2*floor(floor(v(vcode)+0.5)/2))   > 0.5 ? v(vdd) : 0.0
+B_D1 d1 0 V = (floor(floor(v(vcode)+0.5)/2)   - 2*floor(floor(v(vcode)+0.5)/4))   > 0.5 ? v(vdd) : 0.0
+B_D2 d2 0 V = (floor(floor(v(vcode)+0.5)/4)   - 2*floor(floor(v(vcode)+0.5)/8))   > 0.5 ? v(vdd) : 0.0
+B_D3 d3 0 V = (floor(floor(v(vcode)+0.5)/8)   - 2*floor(floor(v(vcode)+0.5)/16))  > 0.5 ? v(vdd) : 0.0
+B_D4 d4 0 V = (floor(floor(v(vcode)+0.5)/16)  - 2*floor(floor(v(vcode)+0.5)/32))  > 0.5 ? v(vdd) : 0.0
+B_D5 d5 0 V = (floor(floor(v(vcode)+0.5)/32)  - 2*floor(floor(v(vcode)+0.5)/64))  > 0.5 ? v(vdd) : 0.0
+B_D6 d6 0 V = (floor(floor(v(vcode)+0.5)/64)  - 2*floor(floor(v(vcode)+0.5)/128)) > 0.5 ? v(vdd) : 0.0
+B_D7 d7 0 V = (floor(floor(v(vcode)+0.5)/128) - 2*floor(floor(v(vcode)+0.5)/256)) > 0.5 ? v(vdd) : 0.0
+
+* External Verilog-instantiated drivers: tiel -> clkbuf_20 (term) + 8x clkbuf_20 (d[7:0])
+X_TIEL lo vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__tiel
+X_TERM lo drv_term vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B0 d0 drv0 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B1 d1 drv1 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B2 d2 drv2 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B3 d3 drv3 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B4 d4 drv4 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B5 d5 drv5 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B6 d6 drv6 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+X_B7 d7 drv7 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
+
+XR2R vss drv_term drv7 drv6 drv5 drv4 drv3 drv2 drv1 drv0 dac_out r2r_ladder_8bit
+
+.control
+set wr_singlescale
+dc VCODE 0 255 1
+wrdata out.dat v(dac_out) i(VDD)
+quit
+.endc
+.end
