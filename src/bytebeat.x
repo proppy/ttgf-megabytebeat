@@ -3,6 +3,8 @@
 
 // Canonical 8-bit bytebeat synthesizer formulas shared across tracks.
 
+import std;
+
 pub fn the42melody(t: u32, a: u4, b: u4, c: u4, d: u4) -> u8 {
     let ab = (b ++ a) as u32;
     let cd = (d ++ c) as u32;
@@ -10,30 +12,35 @@ pub fn the42melody(t: u32, a: u4, b: u4, c: u4, d: u4) -> u8 {
     s as u8
 }
 
-fn umod_u32_u9(n: u32, d: u9) -> u9 {
-    let d10 = d as u10;
-    for (i, rem): (u32, u9) in u32:0..u32:32 {
-        let bit = n[(u32:31 - i)+:u1];
-        let cand: u10 = rem ++ bit;
-        if cand >= d10 { (cand - d10) as u9 } else { cand as u9 }
-    }(u9:0)
-}
-
 pub fn fractaltrees(t: u32, a: u4, b: u4, c: u4, d: u4) -> u8 {
-    let ab8 = b ++ a;
-    let ab: u9 = if ab8 == u8:0 { u9:1 } else { ab8 as u9 };
-    let cd_257: u9 = ((d ++ c) as u9) + u9:2;
-    let r0 = umod_u32_u9(t, ab) as u8;
-    let r1 = umod_u32_u9(t, cd_257) as u8;
-    (t as u8) | r0 | r1
+    let ab = b ++ a;
+    let ab = if ab == u8:0 { u8:1 } else { ab };
+    let cd_257 = ((d ++ c) as u9) + u9:2;
+    let (_, r0) = std::iterative_div_mod(t, ab);
+    let (_, r1) = std::iterative_div_mod(t, cd_257);
+    (t as u8) | r0 | (r1 as u8)
 }
 
 #[test]
-fn umod_u32_u9_test() {
-    assert_eq(umod_u32_u9(u32:0x12345678, u9:42), (u32:0x12345678 % u32:42) as u9);
-    assert_eq(umod_u32_u9(u32:0xffffffff, u9:257), (u32:0xffffffff % u32:257) as u9);
-    assert_eq(umod_u32_u9(u32:100000, u9:1), u9:0);
-    assert_eq(umod_u32_u9(u32:987654321, u9:255), (u32:987654321 % u32:255) as u9);
+fn fractaltrees_mod_test() {
+    for (t, _): (u32, ()) in u32:0..u32:64 {
+        for (ab, _): (u8, ()) in u8:0..u8:8 {
+            let a = ab[0+:u4];
+            let b = ab[4+:u4];
+            let c = u4:0xf;
+            let d = u4:0xf;
+            let ab_nz = if ab == u8:0 { u32:1 } else { ab as u32 };
+            let cd_257 = ((d ++ c) as u32) + u32:2;
+            let expected = (t | (t % ab_nz) | (t % cd_257)) as u8;
+            assert_eq(fractaltrees(t, a, b, c, d), expected);
+        }(());
+    }(());
+    // Also check large t with max divisors (ab=255, cd+2=257).
+    let t_hi = u32:0x12345678;
+    assert_eq(
+        fractaltrees(t_hi, u4:0xf, u4:0xf, u4:0xf, u4:0xf),
+        (t_hi | (t_hi % u32:255) | (t_hi % u32:257)) as u8,
+    );
 }
 
 pub fn untitleddroid(t: u32, a: u4, b: u4, c: u4, d: u4) -> u8 {
