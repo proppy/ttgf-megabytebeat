@@ -396,3 +396,78 @@ async def test_adc_ams_pvt(
         f"Vtrip={trips[0]:.3f}..{trips[-1]:.3f}V, max|DNL|={lin.max_dnl:.4f} LSB, "
         f"max|INL|={lin.max_inl:.4f} LSB, live sweeps {exp_codes1} & {exp_codes2} bit-exact"
     )
+
+
+@cocotb.test()
+async def test_bpm_tap_tempo_lock(dut):
+    """Verify ui_in[0] BPM pulse stretching, glitch rejection, and 120 -> 480 BPM lock on DACs."""
+    dac0_sel, dac1_sel = 1, 2  # fractaltrees & untitleddroid
+    adc, dac = await init_dut(dut, dac0_sel=dac0_sel, dac1_sel=dac1_sel)
+    adc.set_codes([5, 1, 3, 0])
+    adc.start()
+
+    dut.rst_n.value = 1
+    await RisingEdge(dut.clk)
+
+    # Golden model matching adc_ramp + bpm_sync_step + megabytebeat
+    prev_bpm = False
+    tick_cnt = 0
+    period_m = 4096
+    acc = 0
+    t_synth = 0
+    active_params = (10, 2, 10, 0)
+    held_pcm = [0] * 5
+
+    # Short 4-clock pulses on ui_in[0] test both the 2-FF synchronizer and /64 pulse stretcher:
+    #   tick 0    -> initial rising edge (tick_cnt=0 < 1024, period_m stays 4096)
+    #   tick 2    -> glitch edge (tick_cnt=2 < 1024, rejected; period_m stays 4096)
+    #   tick 1026 -> 1024 ticks after tick 2 -> re-locks to period_m=1024 (480 BPM = 1 tick/sample)
+    pulse_ticks = {0, 2, 1026}
+    total_ticks = 1043
+    relock_dac_codes: list[list[int]] = []
+
+    try:
+        for tick in range(total_ticks):
+            pulse = tick in pulse_ticks
+            if pulse:
+                dut.ui_in.value = 1
+                await ClockCycles(dut.clk, 4)
+                dut.ui_in.value = 0
+                await ClockCycles(dut.clk, 28)
+            else:
+                await ClockCycles(dut.clk, 32)
+
+            # Sample both 8-bit R-2R DACs mid-tick and verify bit-exact match
+            if tick in range(3, 20) or tick >= 1027:
+                exp_dacs = [held_pcm[dac0_sel], held_pcm[dac1_sel]]
+                got_dacs = dac.codes()
+                assert got_dacs == exp_dacs, (
+                    f"BPM sync DAC mismatch at tick={tick} period_m={period_m}: "
+                    f"got {got_dacs}, expected {exp_dacs}"
+                )
+                if tick >= 1027:
+                    relock_dac_codes.append(got_dacs)
+
+            await ClockCycles(dut.clk, 32)
+
+            # Advance golden state at tick_en (clock 63 of this tick)
+            adc_vld = (tick % 16) == 15
+            if adc_vld:
+                active_params = (5, 1, 3, 0)
+            rising = pulse and not prev_bpm
+            if rising and tick_cnt >= 1024:
+                period_m = tick_cnt
+            tick_cnt = 1 if rising else min(tick_cnt + 1, 65535)
+            prev_bpm = pulse
+            next_acc = acc + 1024
+            sample_tick = next_acc >= period_m
+            acc = (next_acc - period_m) if sample_tick else next_acc
+            if sample_tick:
+                held_pcm = eval_tracks_py(t_synth, *active_params)
+                t_synth += 1
+    finally:
+        adc.stop()
+
+    assert period_m == 1024
+    # At 480 BPM (1 sample per tick), consecutive ticks must produce changing DAC outputs
+    assert len({tuple(c) for c in relock_dac_codes}) > 4

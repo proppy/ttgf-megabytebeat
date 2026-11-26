@@ -12,7 +12,7 @@
 //   - 5x 8-bit PWM audio outputs on `uo_out[{7,3,2,1,0}]`
 //   - Combinational zero-standby power-gating (`rst || !ena`) clamps all 4 ADC and 2 DAC ladders to 0 V.
 module tt_um_proppy_megabytebeat (
-    input  wire [7:0] ui_in,    // [0]=reserved(bpm_in), [7:1]=unused
+    input  wire [7:0] ui_in,    // [0]=bpm_in, [7:1]=unused
     output wire [7:0] uo_out,   // [0..3,7]=5x PWM audio, [6:4]=0
     input  wire [7:0] uio_in,   // [2:0]=dac0_sel, [5:3]=dac1_sel, [7:6]=unused
     output wire [7:0] uio_out,  // 0
@@ -29,7 +29,7 @@ module tt_um_proppy_megabytebeat (
     wire rst       = !rst_n;
     wire analog_en = rst_n && ena;
 
-    // /64 tick divider: drives ADC ramp and core tick (aligned with /256 PWM frames)
+    // /64 tick divider: drives ADC ramp, BPM sync, and core tick (aligned with /256 PWM frames)
     reg [5:0] div64;
     always @(posedge clk) begin
         if (rst) div64 <= 6'h00;
@@ -37,7 +37,25 @@ module tt_um_proppy_megabytebeat (
     end
     wire tick_en = (div64 == 6'h3f);
 
-    // Fused XLS core: 4x sc_adc_ramp_1ch_4b -> 5-track synth -> 2x sc_r2r_dac_8bit
+    // 2-FF synchronizer + pulse stretcher for external bpm_in (ui_in[0]) across /64 ticks
+    reg bpm_ff0, bpm_ff1, bpm_prev, bpm_edge_pend;
+    always @(posedge clk) begin
+        if (rst) begin
+            bpm_ff0       <= 1'b0;
+            bpm_ff1       <= 1'b0;
+            bpm_prev      <= 1'b0;
+            bpm_edge_pend <= 1'b0;
+        end else begin
+            bpm_ff0  <= ui_in[0];
+            bpm_ff1  <= bpm_ff0;
+            bpm_prev <= bpm_ff1;
+            if (bpm_ff1 && !bpm_prev) bpm_edge_pend <= 1'b1;
+            else if (tick_en)         bpm_edge_pend <= 1'b0;
+        end
+    end
+    wire bpm_in_sync = bpm_ff1 || bpm_edge_pend;
+
+    // Fused XLS core: 4x sc_adc_ramp_1ch_4b -> bpm_sync -> 5-track synth -> 2x sc_r2r_dac_8bit
     wire [15:0] adc_in_packed = {3'b0, ua[3], 3'b0, ua[2], 3'b0, ua[1], 3'b0, ua[0]};
     wire [39:0] pcm_bus;
 
@@ -47,6 +65,9 @@ module tt_um_proppy_megabytebeat (
         ._en_r(analog_en),
         ._en_r_vld(tick_en),
         ._en_r_rdy(),
+        ._bpm_r(bpm_in_sync),
+        ._bpm_r_vld(tick_en),
+        ._bpm_r_rdy(),
         ._adc_in_r(adc_in_packed),
         ._adc_in_r_vld(tick_en),
         ._adc_in_r_rdy(),
@@ -72,7 +93,7 @@ module tt_um_proppy_megabytebeat (
     assign uio_out = 8'h00;
     assign uio_oe  = 8'h00;
 
-    wire _unused = &{ui_in, uio_in[7:6], 1'b0};
+    wire _unused = &{ui_in[7:1], uio_in[7:6], 1'b0};
 endmodule
 
 `default_nettype wire

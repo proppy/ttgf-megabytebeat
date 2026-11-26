@@ -3,7 +3,7 @@ project:
   title:        "megabytebeat"
   author:       "proppy"
   discord:      "proppy"
-  description:  "Mixed-signal bytebeat synth: 4x 4-bit ramp ADCs, 5-track XLS core, 2x 8-bit poly R-2R DACs, and 5x PWM."
+  description:  "Mixed-signal bytebeat synth: 4x 4-bit ramp ADCs, Bresenham BPM sync, 5-track XLS core, 2x 8-bit poly R-2R DACs, and 5x PWM."
   language:     "xls"
   clock_hz:     2048000  # 8000 * 256
   tiles: "2x2"
@@ -19,7 +19,7 @@ project:
 
 pinout:
   # Inputs
-  ui[0]: ""
+  ui[0]: "bpm_in (external BPM / tap-tempo sync pulse)"
   ui[1]: ""
   ui[2]: ""
   ui[3]: ""
