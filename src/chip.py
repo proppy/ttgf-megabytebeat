@@ -31,7 +31,8 @@ import gf180
 SRC_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SRC_DIR.parent
 TEST_DIR = REPO_ROOT / "test"
-XLS_VERSION = "v0.0.0-11174-g32dc47058"
+XLS_REPO = "proppy/xls"
+XLS_VERSION = "v0.0.0-11264-g628b096fe"
 RSZ_DONT_TOUCH_RX = (
     r".*(u_tiel|u_tieh|u_term|u_buf|u_inv|u_cmp|u_r2r"
     r"|term_tie|pre_drv|term_drv|in_drv|vsum|cmp_raw|dac_out|adc_in|^ua\[).*"
@@ -118,10 +119,10 @@ def find_or_fetch_xls_bin_dir() -> Path:
     if not (cache_dir / "ir_converter_main").exists():
         cache_dir.parent.mkdir(parents=True, exist_ok=True)
         url = (
-            f"https://github.com/google/xls/releases/download/{XLS_VERSION}/"
+            f"https://github.com/{XLS_REPO}/releases/download/{XLS_VERSION}/"
             f"xls-{XLS_VERSION}-linux-x64.tar.gz"
         )
-        print(f"[xls] Fetching XLS {XLS_VERSION} -> {cache_dir} ...")
+        print(f"[xls] Fetching XLS {XLS_VERSION} ({XLS_REPO}) -> {cache_dir} ...")
         with urllib.request.urlopen(url) as resp:
             data = resp.read()
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tf:
@@ -135,16 +136,20 @@ def compile_xls_core(
     module_name: str,
     out_dir: Path,
     check: bool = True,
+    delay_model: str = "gf180mcu_5v0",
 ) -> Path:
     """Compile fused DSLX proc (with #[extern_verilog] ADC FFI) -> Verilog via XLS CLI."""
     out_dir.mkdir(parents=True, exist_ok=True)
     xls_bin = find_or_fetch_xls_bin_dir()
+    stdlib_dir = xls_bin / "xls/dslx/stdlib"
+    stdlib_args = [f"--dslx_stdlib_path={stdlib_dir}"] if stdlib_dir.is_dir() else []
 
     if check:
         subprocess.run(
             [
                 str(xls_bin / "interpreter_main"),
                 "--compare=jit",
+                *stdlib_args,
                 f"--dslx_path={dslx_path.parent}",
                 str(dslx_path),
             ],
@@ -159,6 +164,7 @@ def compile_xls_core(
         subprocess.run(
             [
                 str(xls_bin / "ir_converter_main"),
+                *stdlib_args,
                 f"--dslx_path={dslx_path.parent}",
                 f"--top={top}",
                 str(dslx_path),
@@ -170,7 +176,12 @@ def compile_xls_core(
     )
     opt_ir_path.write_text(
         subprocess.run(
-            [str(xls_bin / "opt_main"), str(ir_path)],
+            [
+                str(xls_bin / "opt_main"),
+                f"--delay_model={delay_model}",
+                f"--area_model={delay_model}",
+                str(ir_path),
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -180,17 +191,12 @@ def compile_xls_core(
         subprocess.run(
             [
                 str(xls_bin / "codegen_main"),
-                "--generator=pipeline",
-                "--pipeline_stages=1",
-                "--delay_model=unit",
+                f"--delay_model={delay_model}",
+                "--clock_period_ps=488281",
+                "--ffi_fallback_delay_ps=500",
                 f"--module_name={module_name}",
                 "--reset=reset",
-                "--reset_active_low=false",
-                "--reset_asynchronous=false",
-                "--reset_data_path=true",
                 "--use_system_verilog=false",
-                "--flop_inputs=false",
-                "--flop_outputs=false",
                 str(opt_ir_path),
             ],
             check=True,
