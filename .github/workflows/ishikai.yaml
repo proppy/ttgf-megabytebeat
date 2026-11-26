@@ -70,10 +70,12 @@ jobs:
       - name: Install Python dependencies
         run: uv sync
 
-      - name: Build & verify passive r2r_ladder_8bit macro
+      - name: Build & verify passive r2r_ladder_8bit DAC & r2r_ladder_4bit_sum ADC macros
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk_analog
-        run: uv run python src/dac.py --out-dir gen/dac
+        run: |
+          uv run python src/dac.py --out-dir gen/dac
+          uv run python src/adc.py --out-dir gen/adc
 
       - name: Setup Python for LibreLane 3.1
         uses: actions/setup-python@v6
@@ -83,7 +85,7 @@ jobs:
       - name: Install LibreLane
         run: pip install --pre "librelane==3.1.0.dev6"
 
-      - name: Harden megabytebeat_macro (LibreLane Classic, VDD_BB, 5x R-2R DAC)
+      - name: Harden megabytebeat_macro (LibreLane Classic, VDD_BB, 4x ADC + 2x DAC)
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
         run: |
@@ -99,10 +101,12 @@ jobs:
             --save-views-to ishikai/final \
             ishikai/config.yaml
 
-      - name: Verify post-PnR 5x DAC routing parasitics in SPEF
+      - name: Verify post-PnR 4x ADC & 2x DAC routing parasitics in SPEF
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
-        run: uv run python src/dac.py --check-spef ishikai/final/spef
+        run: |
+          uv run python src/dac.py --check-spef ishikai/final/spef --channels 2 --out-nets ua[4],ua[5]
+          uv run python src/adc.py --check-spef ishikai/final/spef
 
       - name: Stage and validate drop-in bundle
         run: |

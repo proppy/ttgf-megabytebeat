@@ -9,6 +9,7 @@ import shutil
 from pathlib import Path
 
 REQUIRED_SRC_FILES = (
+    "adc_ramp.x",
     "bytebeat.x",
     "dac.x",
     "megabytebeat.x",
@@ -16,12 +17,19 @@ REQUIRED_SRC_FILES = (
     "megabytebeat.opt.ir",
     "megabytebeat.v",
     "pwm_audio.v",
+    "r2r_ladder_4bit_sum.v",
     "r2r_ladder_8bit.v",
+    "sc_adc_ramp_1ch_4b.v",
     "sc_r2r_dac_8bit.v",
     "tt_um_proppy_megabytebeat.v",
 )
 
 REQUIRED_MACRO_FILES = (
+    "adc/r2r_ladder_4bit_sum.gds",
+    "adc/r2r_ladder_4bit_sum.lef",
+    "adc/r2r_ladder_4bit_sum.lib",
+    "adc/r2r_ladder_4bit_sum.spice",
+    "adc/r2r_ladder_4bit_sum.pex.spice",
     "dac/r2r_ladder_8bit.gds",
     "dac/r2r_ladder_8bit.lef",
     "dac/r2r_ladder_8bit.lib",

@@ -44,7 +44,8 @@ jobs:
       - name: Verify 4-bit Ramp ADC DSLX & SystemVerilog FFI codegen (adc_ramp.x)
         uses: ./.github/actions/xls-action
         with:
-          xls-version: v0.0.0-11174-g32dc47058
+          xls-repo: proppy/xls
+          xls-version: v0.0.0-11264-g628b096fe
           dslx-path: src/adc_ramp.x
           dslx-top: adc_ramp
           ir-path: /tmp/adc_ramp.ir
@@ -54,8 +55,9 @@ jobs:
           verilog-reset-signal-name: reset
           use-system-verilog: true
           clock-period-ps: 30517500
-          delay-model: unit
-          codegen-extra-args: --generator=pipeline --pipeline_stages=1 --flop_inputs=false --flop_outputs=false --reset_active_low=false --reset_asynchronous=false --reset_data_path=true
+          delay-model: gf180mcu_3v3
+          area-model: gf180mcu_3v3
+          ffi-fallback-delay-ps: 500
           artifact-name: xls-generated-adc-ramp
 
       - name: Verify R-2R ladder, 8-bit DAC & 4-bit Ramp ADC (DRC, LVS, Magic PEX, PVT ngspice, render)

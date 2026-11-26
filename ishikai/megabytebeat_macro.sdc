@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: © 2026 GNSS AFE + megabytebeat Authors
 # SPDX-License-Identifier: Apache-2.0
 #
-# Timing constraints for ISHI-KAI 5.0 V VDD_BB `megabytebeat_macro` (2.048 MHz, 5x 8-bit R-2R DAC).
-# Excludes passive analog inout ports `ua[4:0]` from digital delay/load/driving-cell checks
-# and constrains `u_tt.u_megabytebeat`'s 8 kHz sample-rate registers (`____t`, `____pcm`) as
-# a 256-cycle multicycle path while keeping `clk_8[*]`, `pwm_audio[*]`, and `ena_q` at 1 cycle.
+# Timing constraints for ISHI-KAI 5.0 V VDD_BB `megabytebeat_macro` (2.048 MHz, 4x ADC + 2x DAC).
+# Excludes passive analog inout ports `ua[5:0]` from digital delay/load/driving-cell checks
+# and constrains `u_tt.u_core`'s /64 tick-enabled state registers as a 64-cycle multicycle path
+# while keeping `div64`, `ena_q`, and 5x `u_pwm*` strictly at 1 cycle.
 
 create_clock [get_ports clk] -name clk -period $::env(CLOCK_PERIOD)
 
@@ -21,8 +21,8 @@ if { [info exists ::env(MAX_CAPACITANCE_CONSTRAINT)] } {
 }
 
 set clocks [get_clocks clk]
-set dig_inputs [get_ports {ui_in[*] uio_in[*] ena rst_n}]
-set dig_outputs [get_ports {uo_pwm[*] vdd_bb_hi_s vss_lo_s vss_lo_w vss_lo_e}]
+set dig_inputs [get_ports {uio_in[*] ena rst_n}]
+set dig_outputs [get_ports {uo_pwm[*] vdd_bb_hi_s vdd_bb_hi_e vss_lo_s vss_lo_e}]
 set ana_ports [get_ports {ua[*]}]
 
 set_input_delay $input_delay_value -clock $clocks $dig_inputs
@@ -45,36 +45,28 @@ set cap_load [expr $::env(OUTPUT_CAP_LOAD) / 1000.0]
 puts "\[INFO\] Setting digital output load to: $cap_load"
 set_load $cap_load $dig_outputs
 
-# Analog pins ua[4:0] (5x passive R-2R DAC outputs) are non-timed.
+# Analog pins ua[5:0] (4x ramp ADC sum_in, 2x R-2R DAC out) are non-timed.
 set_false_path -from $ana_ports
 set_false_path -to $ana_ports
 
-# u_tt.u_megabytebeat state flops (32x ____t + 40x ____pcm) only clock-enable on
-# sample_rdy = (clk_8 == 8'hff) -> 256 cycles (125 us).
-set sample_regs {}
+# u_tt.u_core registers (state, t, pcm_bus) update strictly on tick_en = (div64 == 6'h3f) -> 64 cycles.
+set u_core_regs {}
 foreach pin [all_registers -output_pins] {
     set net [get_nets -quiet -of_objects $pin]
     if { $net ne "" } {
         set net_name [get_full_name [lindex $net 0]]
-        if {
-            [string match {*____t*} $net_name]
-            || [string match {*____pcm*} $net_name]
-            || [string match {*pcm\[*} $net_name]
-            || [string match {*pcm_bus*} $net_name]
-        } {
+        if { [string match "*u_core.*" $net_name] || [string match "*pcm_bus*" $net_name] } {
             set cell [lindex [get_cells -quiet -of_objects $pin] 0]
-            if { $cell ne "" && [lsearch -exact $sample_regs $cell] < 0 } {
-                lappend sample_regs $cell
+            if { $cell ne "" && [lsearch -exact $u_core_regs $cell] < 0 } {
+                lappend u_core_regs $cell
             }
         }
     }
 }
-if { [llength $sample_regs] > 0 } {
-    puts "\[INFO\] Applying 256-cycle multicycle path to [llength $sample_regs] sample-rate registers."
-    set_multicycle_path -setup 256 -from $sample_regs -to $sample_regs
-    set_multicycle_path -hold  255 -from $sample_regs -to $sample_regs
-    set_multicycle_path -setup 256 -from [get_ports {ui_in[*] uio_in[*]}] -to $sample_regs
-    set_multicycle_path -hold  255 -from [get_ports {ui_in[*] uio_in[*]}] -to $sample_regs
+if { [llength $u_core_regs] > 0 } {
+    puts "\[INFO\] Applying 64-cycle multicycle path to [llength $u_core_regs] u_core state registers."
+    set_multicycle_path -setup 64 -from $u_core_regs -to $u_core_regs
+    set_multicycle_path -hold  63 -from $u_core_regs -to $u_core_regs
 }
 
 set_clock_uncertainty $::env(CLOCK_UNCERTAINTY_CONSTRAINT) $clocks
