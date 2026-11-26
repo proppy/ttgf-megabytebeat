@@ -82,7 +82,7 @@ jobs:
             --scl gf180mcu_fd_sc_mcu7t5v0 \
             --save-views-to gen/final \
             src/config.json
-          uv run python src/dac.py --check-spef gen/final/spef
+          uv run python src/dac.py --check-spef gen/final/spef --channels 2 --out-nets ua[4],ua[5]
           uv run python src/adc.py --check-spef gen/final/spef
 
       - name: Upload passive DAC SPICE, Magic PEX & post-PnR SPEF for GL AMS co-sim
@@ -162,7 +162,7 @@ jobs:
           cd test
           rm -f tb.vcd tb.fst results.xml
           make clean
-          GATES=yes SIM=icarus COCOTB_TEST_FILTER="test_reset_and_standby_power_gating|test_end_to_end_mixed_signal" make
+          GATES=yes SIM=icarus COCOTB_TEST_FILTER="'test_reset_and_standby_power_gating|test_end_to_end_mixed_signal'" make
           python -m cocotb_tools.check_results results.xml
           rm -f tb.vcd tb.fst results.xml
           make clean
