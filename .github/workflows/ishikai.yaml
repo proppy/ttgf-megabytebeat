@@ -47,7 +47,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install LibreLane
-        run: pip install "librelane==3.0.17"
+        run: pip install --pre "librelane==3.1.0.dev6"
 
       - name: Harden megabytebeat_macro (LibreLane Classic, VDD_BB)
         env:
