@@ -27,7 +27,8 @@ REPO_ROOT = SRC_DIR.parent
 
 @dataclass
 class CosimMetrics:
-    reset_midscale_v: float
+    reset_standby_v: float
+    reset_standby_ua: float
     sweep1_codes: list[int]
     sweep2_codes: list[int]
     sweep3_codes: list[int]
@@ -165,9 +166,11 @@ def run_eurorack_cosim(
     cosim_dir.mkdir(parents=True, exist_ok=True)
 
     print("[cosim 1/3] Compiling fused XLS digital RTL to Verilator d_cosim shared library ...")
+    core_sv = gen_dir / "xls/megabytebeat_core.sv"
+    core_rtl = core_sv if core_sv.exists() else gen_dir / "xls/megabytebeat_core.v"
     so_path, in_ports, out_ports = _build_verilator_cosim_so(
         cosim_dir,
-        core_v=gen_dir / "xls/megabytebeat_core.v",
+        core_v=core_rtl,
     )
     adc_spice = _resolve_ladder_spice(gen_dir / "adc", adc.CELL_NAME, prefer_pex=prefer_pex)
     dac_spice = _resolve_ladder_spice(gen_dir / "dac", dac.CELL_NAME, prefer_pex=prefer_pex)
@@ -247,16 +250,16 @@ def _evaluate_cosim_assertions(dat_path: Path, tracks: int) -> CosimMetrics:
     euro_gain = 100_000.0 / (20_700.0 + 1_000.0 + 100_000.0)
     euro_lsb_v = (4.9803 * euro_gain) / 255.0
 
-    # Check 1: Reset Mid-Scale Bias (code 128 -> ~2.055V at Eurorack jack, click-free startup)
+    # Check 1: Reset Power-Gating Standby (DACs d=8'h00, ADCs step=4'hF -> ~0V & <10 uA)
     r_rst = row_at(45.0)
     reset_v = sig(r_rst, 22)
-    exp_mid_v = (128.0 / 255.0) * 4.9803 * euro_gain
-    assert abs(reset_v - exp_mid_v) < 0.05, (
-        f"Check 1 FAILED: Reset mid-scale {reset_v:.4f}V != {exp_mid_v:.4f}V"
+    reset_idd_ua = -sig(r_rst, 27) * 1e6
+    assert abs(reset_v) < 0.01 and abs(reset_idd_ua) < 10.0, (
+        f"Check 1 FAILED: Reset standby V={reset_v:.4f}V, I(VDD)={reset_idd_ua:.3f}uA"
     )
     print(
-        f"  [PASS 1/7] Reset Mid-Scale Bias: V(euro_out) = {reset_v:.4f}V "
-        f"(target {exp_mid_v:.4f}V, click-free)"
+        f"  [PASS 1/7] Reset Power-Gating Standby: V(euro_out) = {reset_v * 1e3:.2f} mV, "
+        f"I(VDD_core) = {reset_idd_ua:.3f} uA (< 10 uA)"
     )
 
     # Check 2: Closed-Loop ADC Sweep 1 & Sweep 2 Alignment (0 LSB drift across sweep wraparound)
@@ -405,7 +408,8 @@ def _evaluate_cosim_assertions(dat_path: Path, tracks: int) -> CosimMetrics:
     )
 
     return CosimMetrics(
-        reset_midscale_v=reset_v,
+        reset_standby_v=reset_v,
+        reset_standby_ua=reset_idd_ua,
         sweep1_codes=sw1,
         sweep2_codes=sw2,
         sweep3_codes=sw3,

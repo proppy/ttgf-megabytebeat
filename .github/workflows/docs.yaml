@@ -12,7 +12,8 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
-      - name: Generate SystemVerilog for megabytebeat
+
+      - name: Generate Verilog for fused megabytebeat core
         uses: ./.github/actions/xls-action
         with:
           xls-repo: proppy/xls
@@ -25,12 +26,11 @@ jobs:
           verilog-module-name: megabytebeat
           verilog-reset-signal-name: reset
           use-system-verilog: true
-          clock-period-ps: 488281
+          clock-period-ps: 476837
           delay-model: gf180mcu_3v3
           area-model: gf180mcu_3v3
           ffi-fallback-delay-ps: 500
           artifact-name: xls-generated-megabytebeat
-
 
       - name: Build docs
         uses: TinyTapeout/tt-gds-action/docs@ttgf26c

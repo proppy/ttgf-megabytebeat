@@ -31,7 +31,7 @@ jobs:
           verilog-module-name: megabytebeat
           verilog-reset-signal-name: reset
           use-system-verilog: false
-          clock-period-ps: 488281
+          clock-period-ps: 476837
           delay-model: gf180mcu_5v0
           area-model: gf180mcu_5v0
           ffi-fallback-delay-ps: 500

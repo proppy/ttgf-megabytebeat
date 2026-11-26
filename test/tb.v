@@ -1,8 +1,8 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-/* This testbench instantiates the module and exposes digital + analog DAC wires
-   that can be driven / tested by the cocotb test.py.
+/* This testbench instantiates the TTGF26c mixed-signal top module and exposes
+   digital + behavioral analog pins for cocotb RTL and Gate-Level verification.
 */
 module tb ();
 

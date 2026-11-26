@@ -18,10 +18,10 @@ jobs:
       - name: Setup Verilator
         uses: ./.github/actions/setup-verilator
 
-      - name: Install ngspice, libngspice0, and Icarus Verilog
+      - name: Install ngspice and libngspice0
         run: |
           sudo apt-get update
-          sudo apt-get install -y ngspice libngspice0 iverilog
+          sudo apt-get install -y ngspice libngspice0
 
       - name: Setup GF180MCU PDK
         uses: TinyTapeout/ciel-action@v1
@@ -78,17 +78,17 @@ jobs:
           area-model: gf180mcu_3v3
           artifact-name: xls-generated-bpm-sync
 
-      - name: Verify analog macros (DRC/LVS/PEX/PVT/render) & full-chip RTL sim (chip.py)
+      - name: Verify analog macros (DRC/LVS/PEX/PVT/render) & 5-track RTL sim (chip.py)
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
-        run: uv run python src/chip.py --tracks 5 --sim
+        run: uv run python src/chip.py --target waferspace --tracks 5 --sim
 
       - name: Verify closed-loop Eurorack mixed-signal co-simulation (ngspice d_cosim + Verilator + Magic PEX)
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
         run: uv run python src/cosim.py --gen-dir gen --tracks 5 --cv-r-src 100
 
-      - name: Generate SystemVerilog for megabytebeat
+      - name: Generate SystemVerilog for fused megabytebeat core
         uses: ./.github/actions/xls-action
         with:
           xls-repo: proppy/xls
@@ -101,21 +101,20 @@ jobs:
           verilog-module-name: megabytebeat
           verilog-reset-signal-name: reset
           use-system-verilog: true
-          clock-period-ps: 488281
+          clock-period-ps: 476837
           delay-model: gf180mcu_3v3
           area-model: gf180mcu_3v3
           ffi-fallback-delay-ps: 500
           artifact-name: xls-generated-megabytebeat
 
-      - name: Run mixed-signal RTL tests (Verilator + libngspice0 cocotbext-ams)
+      - name: Run TTGF26c mixed-signal RTL tests (Verilator + libngspice0 cocotbext-ams)
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
           AMS_NGSPICE: "1"
         run: |
           cd test
           make clean
-          WAVES=0 uv run make
-          # make will return success even if the tests fail, so check results.xml for failed tests
+          uv run make
           uv run python -m cocotb_tools.check_results results.xml
 
       - name: Test Summary

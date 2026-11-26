@@ -27,8 +27,7 @@ module megabytebeat_macro (
     input  wire       clk,
     input  wire       rst_n,
     input  wire       ena,
-    input  wire       ui_bpm,
-    input  wire [5:0] uio_in,
+    input  wire [6:0] ui_in,    // [0]=bpm_in, [3:1]=dac0_sel, [6:4]=dac1_sel
     output wire [4:0] uo_pwm,
     inout  wire [5:0] ua,
     output wire       vdd_bb_hi_s,
@@ -102,9 +101,9 @@ module megabytebeat_macro (
     /* verilator lint_on UNDRIVEN */
 
     tt_um_proppy_megabytebeat u_tt (
-        .ui_in   ({7'b0, ui_bpm}),
+        .ui_in   ({1'b0, ui_in}),
         .uo_out  (uo_raw),
-        .uio_in  ({2'b00, uio_in}),
+        .uio_in  (8'h00),
         .uio_out (uio_out_unused),
         .uio_oe  (uio_oe_unused),
         .ua      ({ua_unused, ua}),

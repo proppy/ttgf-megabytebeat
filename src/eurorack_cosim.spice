@@ -10,13 +10,15 @@
 * Structural converter wrappers matching src/sc_adc_ramp_1ch_4b.v and src/sc_r2r_dac_8bit.v
 .SUBCKT sc_adc_ramp_1ch_4b vdd vss s3 s2 s1 s0 adc_in cmp
 X_TIEH hi vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__tieh
-X_TERM hi drv_term vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
-X_I0 s0 drv0 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
-X_I1 s1 drv1 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
-X_I2 s2 drv2 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
-X_I3 s3 drv3 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_4
+X_TERM hi drv_term vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_12
+X_I0 s0 drv0 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_12
+X_I1 s1 drv1 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_12
+X_I2 s2 drv2 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_12
+X_I3 s3 drv3 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkinv_12
 XR2R vss drv_term drv3 drv2 drv1 drv0 vsum adc_in r2r_ladder_4bit_sum
-X_CMP vsum cmp vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_1
+X_TIEL cmp_lo vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__tiel
+X_CMP vsum vsum cmp_lo cmp_raw vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__aoi21_1
+X_POST cmp_raw cmp vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__inv_1
 .ENDS sc_adc_ramp_1ch_4b
 
 * Shared PCB 5.00V supply + lumped bondwire/padring resistance (0.15 ohm on VDD & VSS)
@@ -102,7 +104,7 @@ R_EURO_LOAD4 euro_out_4 0 100k
 
 .control
 tran 1u 2080u
-wrdata eurorack_cosim.dat v(pad_bpm) v(bpm_core) i(V_BPM_JACK) v(vdd_core) v(vss_core) v(a_dbg_sample_tick) v(a_dbg_a_3) v(a_dbg_a_2) v(a_dbg_a_1) v(a_dbg_a_0) v(a_dbg_b_3) v(a_dbg_b_2) v(a_dbg_b_1) v(a_dbg_b_0) v(a_dbg_c_3) v(a_dbg_c_2) v(a_dbg_c_1) v(a_dbg_c_0) v(a_dbg_d_3) v(a_dbg_d_2) v(a_dbg_d_1) v(a_dbg_d_0) v(euro_out_0) v(euro_out_1) v(euro_out_2) v(euro_out_3) v(euro_out_4)
+wrdata eurorack_cosim.dat v(pad_bpm) v(bpm_core) i(V_BPM_JACK) v(vdd_core) v(vss_core) v(a_dbg_sample_tick) v(a_dbg_a_3) v(a_dbg_a_2) v(a_dbg_a_1) v(a_dbg_a_0) v(a_dbg_b_3) v(a_dbg_b_2) v(a_dbg_b_1) v(a_dbg_b_0) v(a_dbg_c_3) v(a_dbg_c_2) v(a_dbg_c_1) v(a_dbg_c_0) v(a_dbg_d_3) v(a_dbg_d_2) v(a_dbg_d_1) v(a_dbg_d_0) v(euro_out_0) v(euro_out_1) v(euro_out_2) v(euro_out_3) v(euro_out_4) i(VSUP)
 quit
 .endc
 .end

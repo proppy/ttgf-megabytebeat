@@ -1,11 +1,11 @@
 # Copyright 2026 Google LLC.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Timing constraints for TTGF26c 2x2 mixed-signal `tt_um_proppy_megabytebeat` (2.048 MHz).
+# Timing constraints for TTGF26c 2x2 mixed-signal `tt_um_proppy_megabytebeat` (2.097152 MHz).
 # Mirrors LibreLane's base.sdc for digital I/O while:
 #   1. Excluding passive analog inout ports `ua[*]` from digital delay/load/driving-cell checks.
-#   2. Constraining `u_core`'s /64 tick-enabled state registers as a 64-cycle multicycle path
-#      (keeping div64, rst_n, and 5x PWM strictly at 1-cycle).
+#   2. Constraining `u_core`'s /64 tick-enabled state registers (32.768 kHz) as a 64-cycle
+#      multicycle path (keeping div64, bpm sync, rst_n, and 5x PWM strictly at 1-cycle 2.097 MHz).
 
 create_clock [get_ports clk] -name clk -period $::env(CLOCK_PERIOD)
 
@@ -50,8 +50,8 @@ set_load $cap_load $dig_outputs
 set_false_path -from $ana_ports
 set_false_path -to $ana_ports
 
-# u_core registers (state, t, pcm_bus) update strictly on tick_en = (div64 == 6'h3f) -> 64 cycles.
-# Keeping div64, rst_n, and 5x u_pwm* out of u_core_regs holds them strictly at 1-cycle.
+# u_core registers (state, t, pcm_bus) update strictly on tick_en = (div64 == 6'h3f) -> 64 cycles (30.5175 us).
+# Keeping div64, bpm_*, rst_n, and 5x u_pwm* out of u_core_regs holds them strictly at 1-cycle (476.8 ns).
 set u_core_regs {}
 foreach pin [all_registers -output_pins] {
     set net [get_nets -quiet -of_objects $pin]
