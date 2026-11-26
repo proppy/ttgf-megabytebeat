@@ -3,29 +3,30 @@ project:
   title:        "megabytebeat"
   author:       "proppy"
   discord:      "proppy"
-  description:  "Best-of compilation of bytebeat 2011's greatest hits on-a-chip with 5x 8-bit R-2R DAC analog outputs."
+  description:  "Mixed-signal bytebeat synth: 4x 4-bit ramp ADCs, 5-track XLS core, 2x 8-bit poly R-2R DACs, and 5x PWM."
   language:     "xls"
   clock_hz:     2048000  # 8000 * 256
   tiles: "2x2"
-  analog_pins: 5
+  analog_pins: 6
   uses_vapwr: false
   top_module:  "tt_um_proppy_megabytebeat"
   source_files:
     - "tt_um_proppy_megabytebeat.v"
     - "pwm_audio.v"
     - "megabytebeat.sv"
+    - "sc_adc_ramp_1ch_4b.v"
     - "sc_r2r_dac_8bit.v"
 
 pinout:
   # Inputs
-  ui[0]: "param `a` bit 0/3"
-  ui[1]: "param `a` bit 1/3"
-  ui[2]: "param `a` bit 2/3"
-  ui[3]: "param `a` bit 3/3"
-  ui[4]: "param `b` bit 0/3"
-  ui[5]: "param `b` bit 1/3"
-  ui[6]: "param `b` bit 2/3"
-  ui[7]: "param `b` bit 3/3"
+  ui[0]: ""
+  ui[1]: ""
+  ui[2]: ""
+  ui[3]: ""
+  ui[4]: ""
+  ui[5]: ""
+  ui[6]: ""
+  ui[7]: ""
 
   # Outputs
   uo[0]: "track #0 PWM output"
@@ -37,23 +38,23 @@ pinout:
   uo[6]: "N/A"
   uo[7]: "track #7 PWM output"
 
-  # Bidirectional pins
-  uio[0]: "param `c` bit 0/3"
-  uio[1]: "param `c` bit 1/3"
-  uio[2]: "param `c` bit 2/3"
-  uio[3]: "param `c` bit 3/3"
-  uio[4]: "param `d` bit 0/3"
-  uio[5]: "param `d` bit 1/3"
-  uio[6]: "param `d` bit 2/3"
-  uio[7]: "param `d` bit 3/3"
+  # Bidirectional pins (inputs; uio_oe = 0x00)
+  uio[0]: "dac0_sel[0] (DAC0 track select bit 0)"
+  uio[1]: "dac0_sel[1] (DAC0 track select bit 1)"
+  uio[2]: "dac0_sel[2] (DAC0 track select bit 2)"
+  uio[3]: "dac1_sel[0] (DAC1 track select bit 0)"
+  uio[4]: "dac1_sel[1] (DAC1 track select bit 1)"
+  uio[5]: "dac1_sel[2] (DAC1 track select bit 2)"
+  uio[6]: ""
+  uio[7]: ""
 
   # Analog pins
-  ua[0]: "track #0 8-bit R-2R DAC output"
-  ua[1]: "track #1 8-bit R-2R DAC output"
-  ua[2]: "track #2 8-bit R-2R DAC output"
-  ua[3]: "track #3 8-bit R-2R DAC output"
-  ua[4]: "track #7 8-bit R-2R DAC output"
-  ua[5]: ""
+  ua[0]: "adc_in[0] (param a analog CV, 0-3.3 V)"
+  ua[1]: "adc_in[1] (param b analog CV, 0-3.3 V)"
+  ua[2]: "adc_in[2] (param c analog CV, 0-3.3 V)"
+  ua[3]: "adc_in[3] (param d analog CV, 0-3.3 V)"
+  ua[4]: "dac_out[0] (8-bit poly R-2R DAC #0)"
+  ua[5]: "dac_out[1] (8-bit poly R-2R DAC #1)"
 
 # Do not change!
 yaml_version: 6

@@ -61,12 +61,13 @@ jobs:
       - name: Install Python dependencies
         run: uv sync
 
-      - name: Build & verify passive r2r_ladder_8bit macro & harden 2x2 analog tile
+      - name: Build & verify passive ADC/DAC macros & harden 2x2 analog tile
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
         run: |
           uv run python src/tools.py
           uv run python src/dac.py --out-dir gen/dac
+          uv run python src/adc.py --out-dir gen/adc
           curl -fsSL \
             https://raw.githubusercontent.com/TinyTapeout/tt-support-tools/main/tech/gf180mcuD/def/analog/tt_analog_2x2.def \
             -o gen/tt_analog_2x2.def
@@ -82,6 +83,7 @@ jobs:
             --save-views-to gen/final \
             src/config.json
           uv run python src/dac.py --check-spef gen/final/spef
+          uv run python src/adc.py --check-spef gen/final/spef
 
       - name: Upload passive DAC SPICE, Magic PEX & post-PnR SPEF for GL AMS co-sim
         uses: actions/upload-artifact@v7
@@ -160,7 +162,7 @@ jobs:
           cd test
           rm -f tb.vcd tb.fst results.xml
           make clean
-          GATES=yes SIM=icarus COCOTB_TEST_FILTER="test_bytebeat" make
+          GATES=yes SIM=icarus COCOTB_TEST_FILTER="test_reset_and_standby_power_gating|test_end_to_end_mixed_signal" make
           python -m cocotb_tools.check_results results.xml
           rm -f tb.vcd tb.fst results.xml
           make clean

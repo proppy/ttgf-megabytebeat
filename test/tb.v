@@ -21,10 +21,12 @@ module tb ();
   reg ena;
   reg [7:0] ui_in;
   reg [7:0] uio_in;
+  reg [3:0] ua_in;
   wire [7:0] uo_out;
   wire [7:0] uio_out;
   wire [7:0] uio_oe;
   wire [7:0] ua;
+  assign ua[3:0] = ua_in;
 `ifdef GL_TEST
   wire VPWR = 1'b1;
   wire VGND = 1'b0;
@@ -43,7 +45,7 @@ module tb ();
       .uio_in (uio_in),   // IOs: Input path
       .uio_out(uio_out),  // IOs: Output path
       .uio_oe (uio_oe),   // IOs: Enable path (active high: 0=input, 1=output)
-      .ua     (ua),       // Analog outputs: ua[4:0] = 5x 8-bit R-2R DAC tracks
+      .ua     (ua),       // Analog pins (ua[3:0]=ADC in, ua[5:4]=DAC out)
       .ena    (ena),      // enable - goes high when design is selected
       .clk    (clk),      // clock
       .rst_n  (rst_n)     // not reset

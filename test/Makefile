@@ -6,7 +6,7 @@ SIM ?= verilator
 FST ?= -fst # Use more efficient FST format (Icarus)
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = tt_um_proppy_megabytebeat.v pwm_audio.v megabytebeat.sv sc_r2r_dac_8bit.v r2r_ladder_8bit.v
+PROJECT_SOURCES = tt_um_proppy_megabytebeat.v pwm_audio.v megabytebeat.sv sc_adc_ramp_1ch_4b.v sc_r2r_dac_8bit.v r2r_ladder_4bit_sum.v r2r_ladder_8bit.v
 
 ifneq ($(GATES),yes)
 
@@ -30,6 +30,7 @@ COMPILE_ARGS    += -DUNIT_DELAY=\#1
 endif
 VERILOG_SOURCES += $(PDK_ROOT)/gf180mcuD/libs.ref/gf180mcu_fd_sc_mcu7t5v0/verilog/primitives.v
 VERILOG_SOURCES += $(PDK_ROOT)/gf180mcuD/libs.ref/gf180mcu_fd_sc_mcu7t5v0/verilog/gf180mcu_fd_sc_mcu7t5v0.v
+VERILOG_SOURCES += $(SRC_DIR)/r2r_ladder_4bit_sum.v
 VERILOG_SOURCES += $(SRC_DIR)/r2r_ladder_8bit.v
 
 # this gets copied in by the GDS action workflow

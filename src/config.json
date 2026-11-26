@@ -31,18 +31,34 @@
   "//": "https://tinytapeout.com/faq/#how-can-i-map-an-additional-external-clock-to-one-of-the-gpios",
   "CLOCK_PORT": "clk",
 
-  "//": "Mixed-signal 2x2 analog tile + passive R-2R DAC macro configuration:",
+  "//": "Mixed-signal 2x2 analog tile + passive R-2R ADC & DAC macro configuration:",
   "DESIGN_NAME": "tt_um_proppy_megabytebeat",
   "USE_SLANG": true,
   "VERILOG_FILES": [
     "dir::tt_um_proppy_megabytebeat.v",
     "dir::pwm_audio.v",
     "dir::megabytebeat.sv",
+    "dir::sc_adc_ramp_1ch_4b.v",
     "dir::sc_r2r_dac_8bit.v"
   ],
   "PNR_SDC_FILE": "dir::tt_um_proppy_megabytebeat.sdc",
   "SIGNOFF_SDC_FILE": "dir::tt_um_proppy_megabytebeat.sdc",
   "MACROS": {
+    "r2r_ladder_4bit_sum": {
+      "gds": ["dir::../gen/adc/r2r_ladder_4bit_sum.gds"],
+      "lef": ["dir::../gen/adc/r2r_ladder_4bit_sum.lef"],
+      "vh": ["dir::r2r_ladder_4bit_sum.v"],
+      "lib": {
+        "*": ["dir::../gen/adc/r2r_ladder_4bit_sum.lib"]
+      },
+      "spice": ["dir::../gen/adc/r2r_ladder_4bit_sum.spice"],
+      "instances": {
+        "u_core.__adc_ramp__adc_ramp_1ch_cmp_hi_inst.u_r2r": {"location": [635.04, 7.84], "orientation": "N"},
+        "u_core.__adc_ramp__adc_ramp_1ch_cmp_hi__1_inst.u_r2r": {"location": [547.68, 7.84], "orientation": "N"},
+        "u_core.__adc_ramp__adc_ramp_1ch_cmp_hi__2_inst.u_r2r": {"location": [460.32, 7.84], "orientation": "N"},
+        "u_core.__adc_ramp__adc_ramp_1ch_cmp_hi__3_inst.u_r2r": {"location": [372.96, 7.84], "orientation": "N"}
+      }
+    },
     "r2r_ladder_8bit": {
       "gds": ["dir::../gen/dac/r2r_ladder_8bit.gds"],
       "lef": ["dir::../gen/dac/r2r_ladder_8bit.lef"],
@@ -52,60 +68,30 @@
       },
       "spice": ["dir::../gen/dac/r2r_ladder_8bit.spice"],
       "instances": {
-        "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.u_r2r": {"location": [356.16, 7.84], "orientation": "N"},
-        "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.u_r2r": {"location": [276.08, 7.84], "orientation": "N"},
-        "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.u_r2r": {"location": [196.0, 7.84], "orientation": "N"},
-        "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.u_r2r": {"location": [115.92, 7.84], "orientation": "N"},
-        "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.u_r2r": {"location": [35.84, 7.84], "orientation": "N"}
+        "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.u_r2r": {"location": [276.08, 7.84], "orientation": "N"},
+        "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.u_r2r": {"location": [196.0, 7.84], "orientation": "N"}
       }
     }
   },
   "MANUAL_GLOBAL_PLACEMENTS": {
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[7].u_buf": {"location": [337.68, 43.12], "orientation": "N"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[6].u_buf": {"location": [357.28, 47.04], "orientation": "S"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[5].u_buf": {"location": [337.68, 50.96], "orientation": "N"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[4].u_buf": {"location": [321.44, 47.04], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[3].u_buf": {"location": [357.28, 54.88], "orientation": "S"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[2].u_buf": {"location": [337.68, 58.8], "orientation": "N"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[1].u_buf": {"location": [321.44, 54.88], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[0].u_buf": {"location": [357.28, 62.72], "orientation": "S"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.u_term": {"location": [376.88, 43.12], "orientation": "FN"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[7].u_buf": {"location": [259.28, 43.12], "orientation": "N"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[6].u_buf": {"location": [278.88, 47.04], "orientation": "S"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[5].u_buf": {"location": [243.04, 47.04], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[4].u_buf": {"location": [259.28, 50.96], "orientation": "N"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[3].u_buf": {"location": [278.88, 54.88], "orientation": "S"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[2].u_buf": {"location": [243.04, 54.88], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[1].u_buf": {"location": [259.28, 58.8], "orientation": "N"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[0].u_buf": {"location": [278.88, 62.72], "orientation": "S"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.u_term": {"location": [298.48, 43.12], "orientation": "FN"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[7].u_buf": {"location": [184.24, 43.12], "orientation": "FN"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[6].u_buf": {"location": [164.64, 47.04], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[5].u_buf": {"location": [200.48, 47.04], "orientation": "S"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[4].u_buf": {"location": [184.24, 50.96], "orientation": "FN"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[3].u_buf": {"location": [164.64, 54.88], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[2].u_buf": {"location": [200.48, 54.88], "orientation": "S"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[1].u_buf": {"location": [184.24, 58.8], "orientation": "FN"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[0].u_buf": {"location": [164.64, 62.72], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.u_term": {"location": [145.04, 43.12], "orientation": "N"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[7].u_buf": {"location": [105.84, 43.12], "orientation": "FN"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[6].u_buf": {"location": [86.24, 47.04], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[5].u_buf": {"location": [105.84, 50.96], "orientation": "FN"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[4].u_buf": {"location": [122.08, 47.04], "orientation": "S"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[3].u_buf": {"location": [86.24, 54.88], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[2].u_buf": {"location": [105.84, 58.8], "orientation": "FN"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[1].u_buf": {"location": [122.08, 54.88], "orientation": "S"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[0].u_buf": {"location": [66.64, 43.12], "orientation": "N"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.u_term": {"location": [86.24, 62.72], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[7].u_buf": {"location": [26.88, 43.12], "orientation": "FN"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[6].u_buf": {"location": [7.84, 47.04], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[5].u_buf": {"location": [26.88, 50.96], "orientation": "FN"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[4].u_buf": {"location": [43.68, 47.04], "orientation": "S"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[3].u_buf": {"location": [7.84, 54.88], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[2].u_buf": {"location": [26.88, 58.8], "orientation": "FN"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[1].u_buf": {"location": [43.68, 54.88], "orientation": "S"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[0].u_buf": {"location": [7.84, 62.72], "orientation": "FS"},
-    "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.u_term": {"location": [26.88, 66.64], "orientation": "FN"}
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[7].u_buf": {"location": [259.28, 43.12], "orientation": "N"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[6].u_buf": {"location": [278.88, 47.04], "orientation": "S"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[5].u_buf": {"location": [243.04, 47.04], "orientation": "FS"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[4].u_buf": {"location": [259.28, 50.96], "orientation": "N"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[3].u_buf": {"location": [278.88, 54.88], "orientation": "S"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[2].u_buf": {"location": [243.04, 54.88], "orientation": "FS"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[1].u_buf": {"location": [259.28, 58.8], "orientation": "N"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[0].u_buf": {"location": [278.88, 62.72], "orientation": "S"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.u_term": {"location": [298.48, 43.12], "orientation": "FN"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[7].u_buf": {"location": [184.24, 43.12], "orientation": "FN"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[6].u_buf": {"location": [164.64, 47.04], "orientation": "FS"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[5].u_buf": {"location": [200.48, 47.04], "orientation": "S"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[4].u_buf": {"location": [184.24, 50.96], "orientation": "FN"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[3].u_buf": {"location": [164.64, 54.88], "orientation": "FS"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[2].u_buf": {"location": [200.48, 54.88], "orientation": "S"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[1].u_buf": {"location": [184.24, 58.8], "orientation": "FN"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[0].u_buf": {"location": [164.64, 62.72], "orientation": "FS"},
+    "u_core.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.u_term": {"location": [145.04, 43.12], "orientation": "N"}
   },
   "FP_DEF_TEMPLATE": "dir::../gen/tt_analog_2x2.def",
   "DIE_AREA": [0, 0, 711.2, 325.36],
@@ -152,9 +138,9 @@
     "gf180mcu_fd_sc_mcu7t5v0__dlyd_2",
     "gf180mcu_fd_sc_mcu7t5v0__dlyd_4"
   ],
-  "RSZ_DONT_TOUCH_RX": ".*(u_tiel|u_term|u_buf|u_r2r|term_tie|pre_drv|term_drv|in_drv|^ua\\[).*",
+  "RSZ_DONT_TOUCH_RX": ".*(u_tieh|u_tiel|u_term|u_buf|u_inv|u_cmp|u_r2r|term_tie|pre_drv|term_drv|in_drv|vsum|cmp_raw|^ua\\[).*",
   "DESIGN_REPAIR_BUFFER_INPUT_PORTS": true,
-  "IGNORE_DISCONNECTED_MODULES": ["r2r_ladder_8bit"],
+  "IGNORE_DISCONNECTED_MODULES": ["r2r_ladder_8bit", "r2r_ladder_4bit_sum"],
 
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
