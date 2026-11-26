@@ -41,12 +41,29 @@ jobs:
       - name: Verify native tool versions match LibreLane
         run: uv run python src/tools.py
 
-      - name: Verify R-2R ladder & 8-bit DAC (DRC, LVS, Magic PEX, 256-code PVT ngspice, render)
+      - name: Verify 4-bit Ramp ADC DSLX & SystemVerilog FFI codegen (adc_ramp.x)
+        uses: ./.github/actions/xls-action
+        with:
+          xls-version: v0.0.0-11174-g32dc47058
+          dslx-path: src/adc_ramp.x
+          dslx-top: adc_ramp
+          ir-path: /tmp/adc_ramp.ir
+          opt-ir-path: /tmp/adc_ramp.opt.ir
+          verilog-path: /tmp/adc_ramp.sv
+          verilog-module-name: adc_ramp
+          verilog-reset-signal-name: reset
+          use-system-verilog: true
+          clock-period-ps: 30517500
+          delay-model: unit
+          codegen-extra-args: --generator=pipeline --pipeline_stages=1 --flop_inputs=false --flop_outputs=false --reset_active_low=false --reset_asynchronous=false --reset_data_path=true
+          artifact-name: xls-generated-adc-ramp
+
+      - name: Verify R-2R ladder, 8-bit DAC & 4-bit Ramp ADC (DRC, LVS, Magic PEX, PVT ngspice, render)
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
         run: |
-          uv run python src/dac.py --width 4 --l-1r 6.0 --l-2r 5.42 --sum-res --out-dir gen/r2r4
           uv run python src/dac.py
+          uv run python src/adc.py
 
       - name: Generate SystemVerilog for megabytebeat
         uses: ./.github/actions/xls-action
