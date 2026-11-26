@@ -177,9 +177,11 @@ def run_eurorack_cosim(
     dac_cir.write_text(analog.spice_to_ngspice(dac_spice))
 
     found_spef = _resolve_cosim_spef(gen_dir, spef_path)
-    route_rc = (
-        dac.check_dac_parasitics(found_spef, channels=tracks) if found_spef is not None else None
-    )
+    route_rc = None
+    if found_spef is not None:
+        spef_res = dac.check_dac_parasitics(found_spef, channels=tracks)
+        assert spef_res.ok, "; ".join(spef_res.violations)
+        route_rc = spef_res.channels
     dac_wrappers = cosim_dir / "dac_ch_wrappers.spice"
     dac_wrappers.write_text(dac.export_cosim_spice(channels=tracks, route_rc=route_rc))
     spef_msg = (

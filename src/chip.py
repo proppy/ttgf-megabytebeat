@@ -471,17 +471,22 @@ def build_chip(
     adc_bits: int = 4,
     dac_bits: int = 8,
     out_dir: Path = REPO_ROOT / "gen",
-    check: bool = False,
-    pex: bool = False,
     sim: bool = False,
     cosim: bool = False,
     spef_path: Path | None = None,
     run_ll: bool = False,
     dockerized: bool = False,
-    render: bool = False,
 ) -> None:
     import adc
     import dac
+    import tools
+
+    tool_checks = tools.check_native_tools(("klayout", "magic"))
+    bad_tools = [c for c in tool_checks if not c.ok]
+    assert not bad_tools, (
+        f"Native tool version mismatch vs LibreLane {tools.LIBRELANE_VERSION}: "
+        + ", ".join(f"{c.name}={c.actual} (expected {c.expected})" for c in bad_tools)
+    )
 
     if tracks is None:
         tracks = 2 if target == "tinytapeout" else 5
@@ -490,8 +495,24 @@ def build_chip(
     dac_dir = out_dir / "dac"
     dac_s, dac_cell, dac_pins = dac.build_dac()
     dac_gds, dac_lef, dac_lib, dac_spice = analog.emit_macro(dac_s, dac_cell, dac_pins, dac_dir)
-    if check:
-        dac.check_dac(dac_cell, dac_gds, dac_spice, dac_pins, dac_dir)
+    dac_drc = analog.run_klayout_drc(dac_gds, dac_dir / "drc")
+    assert dac_drc.clean, f"KLayout DRC failed on {dac_gds}:\n{dac_drc.log}"
+    print(f"  [Analog check | {dac_cell.name}] KLayout DRC clean.")
+    dac_lvs = analog.run_klayout_lvs(dac_gds, dac_spice, dac_dir / "lvs", dac_cell.name, dac_pins)
+    assert dac_lvs.ok, f"KLayout LVS failed on {dac_cell.name}:\n{dac_lvs.log}"
+    print(f"  [Analog check | {dac_cell.name}] KLayout LVS matched.")
+    dac._report_dac_corners(dac.simulate_dac_corners(dac_spice), label_prefix="DAC check")
+    dac_pex = dac.extract_dac_pex(
+        dac_gds, dac_dir, cell_name=dac_cell.name, bits=dac_bits, pins=dac_pins
+    )
+    assert dac_pex.ok, f"Magic PEX failed on {dac_cell.name}: {dac_pex}"
+    print(
+        f"  [Magic PEX | {dac_cell.name}] Extracted {dac_pex.spice_path} "
+        f"(R={dac_pex.n_res}, C={dac_pex.n_cap}, bleed={dac_pex.n_float_bleed})"
+    )
+    dac._report_dac_corners(
+        dac.simulate_dac_corners(dac_pex.spice_path), label_prefix="DAC PEX check"
+    )
     dac_col = SimpleNamespace(
         cell_name=dac_cell.name,
         bits=dac_bits,
@@ -501,13 +522,28 @@ def build_chip(
         macro_verilog=SRC_DIR / f"{dac_cell.name}.v",
         wrapper_verilog=SRC_DIR / "sc_r2r_dac_8bit.v",
         spice=dac_spice,
+        pex_spice=dac_pex.spice_path,
     )
 
     adc_dir = out_dir / "adc"
     adc_s, adc_cell, adc_pins = adc.build_adc()
     adc_gds, adc_lef, adc_lib, adc_spice = analog.emit_macro(adc_s, adc_cell, adc_pins, adc_dir)
-    if check:
-        adc.check_adc(adc_cell, adc_gds, adc_spice, adc_pins, adc_dir)
+    adc_drc = analog.run_klayout_drc(adc_gds, adc_dir / "drc")
+    assert adc_drc.clean, f"KLayout DRC failed on {adc_gds}:\n{adc_drc.log}"
+    print(f"  [Analog check | {adc_cell.name}] KLayout DRC clean.")
+    adc_lvs = analog.run_klayout_lvs(adc_gds, adc_spice, adc_dir / "lvs", adc_cell.name, adc_pins)
+    assert adc_lvs.ok, f"KLayout LVS failed on {adc_cell.name}:\n{adc_lvs.log}"
+    print(f"  [Analog check | {adc_cell.name}] KLayout LVS matched.")
+    adc._report_adc_corners(adc.simulate_adc_corners(adc_spice), label_prefix="ADC check")
+    adc_pex = adc.extract_adc_pex(adc_gds, adc_dir, pins=adc_pins)
+    assert adc_pex.ok, f"Magic PEX failed on {adc_cell.name}: {adc_pex}"
+    print(
+        f"  [Magic PEX | {adc_cell.name}] Extracted {adc_pex.spice_path} "
+        f"(R={adc_pex.n_res}, C={adc_pex.n_cap}, bleed={adc_pex.n_float_bleed})"
+    )
+    adc._report_adc_corners(
+        adc.simulate_adc_corners(adc_pex.spice_path), label_prefix="ADC PEX check"
+    )
     adc_col = SimpleNamespace(
         cell_name=adc_cell.name,
         channels=adc_channels,
@@ -518,6 +554,7 @@ def build_chip(
         macro_verilog=SRC_DIR / f"{adc_cell.name}.v",
         wrapper_verilog=SRC_DIR / "sc_adc_ramp_1ch_4b.v",
         spice=adc_spice,
+        pex_spice=adc_pex.spice_path,
     )
 
     core_v = compile_xls_core(
@@ -548,19 +585,12 @@ def build_chip(
         spef_dir = out_dir / "final/spef"
         if spef_dir.is_dir():
             for spef in sorted(spef_dir.rglob("*.spef")):
-                by_ch = dac.check_dac_parasitics(spef, channels=tracks)
-                print(f"  [SPEF check | {spef.name}] OK: {dac.format_parasitics_summary(by_ch)}")
-
-    if pex:
-        dac.extract_dac_pex(
-            dac_gds,
-            dac_dir,
-            cell_name=dac_cell.name,
-            bits=dac_bits,
-            pins=dac_pins,
-            check_ngspice=check,
-        )
-        adc.extract_adc_pex(adc_gds, adc_dir, pins=adc_pins, check_ngspice=check)
+                spef_res = dac.check_dac_parasitics(spef, channels=tracks)
+                assert spef_res.ok, "; ".join(spef_res.violations)
+                print(
+                    f"  [SPEF check | {spef.name}] OK: "
+                    f"{dac.format_parasitics_summary(spef_res.channels)}"
+                )
 
     if sim:
         run_rtl_and_gl_sim(out_dir, chip_core_v, adc_col, dac_col, core_v, tracks, gl_netlist=gl_nl)
@@ -570,22 +600,21 @@ def build_chip(
 
         run_eurorack_cosim(gen_dir=out_dir, tracks=tracks, spef_path=spef_path)
 
-    if render:
-        dac_png = analog.render_gds(
-            dac_col.gds, dac_dir / f"{dac_col.cell_name}.png", width=1800, height=1200
+    dac_png = analog.render_gds(
+        dac_col.gds, dac_dir / f"{dac_col.cell_name}.png", width=1800, height=1200
+    )
+    adc_png = analog.render_gds(
+        adc_col.gds, adc_dir / f"{adc_col.cell_name}.png", width=1600, height=900
+    )
+    print(f"[chip] Rendered {dac_png} and {adc_png}")
+    chip_gds = out_dir / "megabytebeat_chip_core.gds"
+    if not chip_gds.exists() and (out_dir / "final/gds").exists():
+        chip_gds = next((out_dir / "final/gds").glob("*.gds"), chip_gds)
+    if chip_gds.exists():
+        chip_png = analog.render_gds(
+            chip_gds, out_dir / "megabytebeat_chip_core.png", width=2400, height=960
         )
-        adc_png = analog.render_gds(
-            adc_col.gds, adc_dir / f"{adc_col.cell_name}.png", width=1600, height=900
-        )
-        print(f"[chip] Rendered {dac_png} and {adc_png}")
-        chip_gds = out_dir / "megabytebeat_chip_core.gds"
-        if not chip_gds.exists() and (out_dir / "final/gds").exists():
-            chip_gds = next((out_dir / "final/gds").glob("*.gds"), chip_gds)
-        if chip_gds.exists():
-            chip_png = analog.render_gds(
-                chip_gds, out_dir / "megabytebeat_chip_core.png", width=2400, height=960
-            )
-            print(f"[chip] Rendered {chip_png}")
+        print(f"[chip] Rendered {chip_png}")
 
 
 if __name__ == "__main__":
@@ -603,16 +632,6 @@ if __name__ == "__main__":
     ap.add_argument("--adc-bits", type=int, default=4)
     ap.add_argument("--dac-bits", type=int, default=8)
     ap.add_argument("--out-dir", type=Path, default=REPO_ROOT / "gen")
-    ap.add_argument(
-        "--check",
-        action="store_true",
-        help="Run DRC, LVS, and multi-corner ngspice checks on ADC & DAC macros",
-    )
-    ap.add_argument(
-        "--pex",
-        action="store_true",
-        help="Extract Magic polygon PEX (.pex.spice) for DAC & ADC ladders (for cosim & GL AMS)",
-    )
     ap.add_argument(
         "--sim",
         action="store_true",
@@ -635,11 +654,6 @@ if __name__ == "__main__":
         help="Run stock LibreLane hardening flow end-to-end (native Nix or --dockerized)",
     )
     ap.add_argument("--dockerized", action="store_true", help="Force Dockerized LibreLane run")
-    ap.add_argument(
-        "--render",
-        action="store_true",
-        help="Render KLayout GDS preview PNGs for DAC, ADC, and chip core (if built)",
-    )
     args = ap.parse_args()
     build_chip(
         target=args.target,
@@ -648,12 +662,9 @@ if __name__ == "__main__":
         adc_bits=args.adc_bits,
         dac_bits=args.dac_bits,
         out_dir=args.out_dir,
-        check=args.check,
-        pex=args.pex,
         sim=args.sim,
         cosim=args.cosim,
         spef_path=args.spef,
         run_ll=args.librelane,
         dockerized=args.dockerized,
-        render=args.render,
     )
