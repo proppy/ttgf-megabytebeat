@@ -641,6 +641,75 @@ def export_ams_spice(
     return "\n".join(lines)
 
 
+def export_cosim_spice(
+    channels: int = 5,
+    bits: int = BITS,
+    subckt: str = AMS_SUBCKT,
+    cell_name: str = CELL_NAME,
+    route_rc: dict[int, tuple[float, float] | ChannelParasitics] | None = None,
+) -> str:
+    """Return ngspice `.subckt` wrappers for full-chip padring co-sim (`vdd vss d[7..0] out`).
+
+    Emits `subckt` plus per-channel `{subckt}_ch0..ch{channels-1}` with internal `tiel`
+    termination and optional per-bit SPEF driver (`in_drv`/`term_drv`) & output route R/C,
+    connecting directly to the padring (no Tiny Tapeout 500 Ohm analog mux).
+    """
+    parasitics = _coerce_parasitics(route_rc) or {}
+    d_pins = " ".join(f"d{b}" for b in range(bits - 1, -1, -1))
+
+    def _ch_lines(name: str, p: ChannelParasitics | None) -> list[str]:
+        lines = [
+            f".SUBCKT {name} vdd vss {d_pins} out",
+            "X_TIEL lo vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__tiel",
+            f"X_TERM lo drv_term vdd vdd vss vss {DRIVER_CELL}",
+            *[f"X_B{b} d{b} drv{b} vdd vdd vss vss {DRIVER_CELL}" for b in range(bits)],
+        ]
+        term_r, term_c = p.term_rc if p is not None else (0.0, 0.0)
+        term_node = "drv_term"
+        if term_r > 0.0:
+            lines.append(f"R_DRV_TERM drv_term r2r_term {term_r:.4f}")
+            term_node = "r2r_term"
+        if term_c > 0.0:
+            lines.append(f"C_DRV_TERM {term_node} vss {term_c:.6f}p")
+
+        r2r_in_nodes: list[str] = []
+        bit_rc = p.bit_rc if p is not None else ()
+        for b in range(bits):
+            br, bc = bit_rc[b] if b < len(bit_rc) else (0.0, 0.0)
+            node = f"drv{b}"
+            if br > 0.0:
+                lines.append(f"R_DRV{b} drv{b} r2r_in{b} {br:.4f}")
+                node = f"r2r_in{b}"
+            if bc > 0.0:
+                lines.append(f"C_DRV{b} {node} vss {bc:.6f}p")
+            r2r_in_nodes.append(node)
+
+        r2r_pins_msb = " ".join(r2r_in_nodes[b] for b in range(bits - 1, -1, -1))
+        out_r, out_c = p.out_rc if p is not None else (0.0, 0.0)
+        if out_r > 0.0 or out_c > 0.0:
+            lines.append(f"XR2R vss {term_node} {r2r_pins_msb} dac_int {cell_name}")
+            if out_r > 0.0:
+                lines.append(f"R_ROUTE dac_int out {out_r:.4f}")
+            else:
+                lines.append("R_ROUTE dac_int out 0")
+            if out_c > 0.0:
+                lines.append(f"C_ROUTE out vss {out_c:.6f}p")
+        else:
+            lines.append(f"XR2R vss {term_node} {r2r_pins_msb} out {cell_name}")
+        lines.append(f".ENDS {name}")
+        return lines
+
+    out_lines = [
+        f"* Eurorack padring DAC wrappers: {bits + 1}x {DRIVER_CELL} + {cell_name} (+ optional SPEF RC)",
+        *_ch_lines(subckt, None),
+    ]
+    for ch in range(channels):
+        out_lines.append("")
+        out_lines.extend(_ch_lines(f"{subckt}_ch{ch}", parasitics.get(ch)))
+    out_lines.append("")
+    return "\n".join(out_lines)
+
+
 def prepare_ams_spice(
     out_dir: Path,
     r2r_spice: Path,

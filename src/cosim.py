@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
 
+import adc
 import analog
+import dac
 import gf180
 
 SRC_DIR = Path(__file__).resolve().parent
@@ -35,6 +38,9 @@ class CosimMetrics:
     max_dac_err_lsb: float
     dac_settle_99_us: float
     max_rail_droop_mv: float
+    adc_ladder: str = ""
+    dac_ladder: str = ""
+    spef_file: str | None = None
 
 
 def _build_verilator_cosim_so(
@@ -122,10 +128,35 @@ def _write_d_cosim_inst(
     )
 
 
+def _resolve_ladder_spice(base_dir: Path, cell_name: str, prefer_pex: bool = True) -> Path:
+    suffixes = (".pex.spice", ".spice") if prefer_pex else (".spice", ".pex.spice")
+    for suf in suffixes:
+        cand = base_dir / f"{cell_name}{suf}"
+        if cand.is_file():
+            return cand
+    raise FileNotFoundError(f"Missing {cell_name}.spice (or .pex.spice) in {base_dir}")
+
+
+def _resolve_cosim_spef(gen_dir: Path, spef_path: Path | None) -> Path | None:
+    if spef_path is not None:
+        return dac.find_spef(spef_path)
+    env_spef = os.environ.get("SPEF_FILE", "").strip()
+    if env_spef.lower() in ("0", "none", "off", "false"):
+        return None
+    if env_spef:
+        return dac.find_spef(Path(env_spef))
+    local_spef_dir = gen_dir / "final/spef"
+    if local_spef_dir.is_dir():
+        return dac.find_spef(local_spef_dir)
+    return None
+
+
 def run_eurorack_cosim(
     gen_dir: Path = REPO_ROOT / "gen",
     tracks: int = 5,
     cv_r_src_ohm: float = 100.0,
+    spef_path: Path | None = None,
+    prefer_pex: bool = True,
 ) -> CosimMetrics:
     """Run deterministic 68-clock Eurorack mixed-signal transient co-simulation and assert all 7 checks."""
     if tracks != 5:
@@ -138,14 +169,30 @@ def run_eurorack_cosim(
         cosim_dir,
         core_v=gen_dir / "xls/megabytebeat_core.v",
     )
-    adc_cir = cosim_dir / "r2r_ladder_4bit_sum_ngspice.cir"
-    adc_cir.write_text(analog.spice_to_ngspice(gen_dir / "adc/r2r_ladder_4bit_sum.spice"))
-    dac_cir = cosim_dir / "r2r_ladder_8bit_ngspice.cir"
-    dac_cir.write_text(analog.spice_to_ngspice(gen_dir / "dac/r2r_ladder_8bit.spice"))
+    adc_spice = _resolve_ladder_spice(gen_dir / "adc", adc.CELL_NAME, prefer_pex=prefer_pex)
+    dac_spice = _resolve_ladder_spice(gen_dir / "dac", dac.CELL_NAME, prefer_pex=prefer_pex)
+    adc_cir = cosim_dir / f"{adc.CELL_NAME}_ngspice.cir"
+    adc_cir.write_text(analog.spice_to_ngspice(adc_spice))
+    dac_cir = cosim_dir / f"{dac.CELL_NAME}_ngspice.cir"
+    dac_cir.write_text(analog.spice_to_ngspice(dac_spice))
+
+    found_spef = _resolve_cosim_spef(gen_dir, spef_path)
+    route_rc = (
+        dac.check_dac_parasitics(found_spef, channels=tracks) if found_spef is not None else None
+    )
+    dac_wrappers = cosim_dir / "dac_ch_wrappers.spice"
+    dac_wrappers.write_text(dac.export_cosim_spice(channels=tracks, route_rc=route_rc))
+    spef_msg = (
+        f"{found_spef.name} ({dac.format_parasitics_summary(route_rc)})"
+        if found_spef is not None and route_rc is not None
+        else "none"
+    )
+    print(f"  [cosim 1/3] Ladders: adc={adc_spice.name}, dac={dac_spice.name} | SPEF: {spef_msg}")
+
     env_text = analog.ngspice_env(
         corner="typical",
         rcorner="res_typical",
-        includes=[gf180.IO_SPICE, adc_cir, dac_cir],
+        includes=[gf180.IO_SPICE, adc_cir, dac_cir, dac_wrappers],
         extra_libs=["moscap_typical", "diode_typical"],
     )
     (cosim_dir / "env.spice").write_text(env_text + f".param cv_r_src = {cv_r_src_ohm}\n")
@@ -154,16 +201,22 @@ def run_eurorack_cosim(
     print(
         "[cosim 2/3] Running ngspice-42 + Verilator closed-loop transient simulation (0..2.08 ms) ..."
     )
-    subprocess.run(
+    res = subprocess.run(
         ["ngspice", "-b", str(SRC_DIR / "eurorack_cosim.spice")],
         cwd=cosim_dir,
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
     )
+    if res.returncode != 0:
+        tail = "\n".join((res.stdout + "\n" + res.stderr).splitlines()[-40:])
+        raise RuntimeError(f"ngspice cosim failed (exit {res.returncode}):\n{tail}")
 
     print("[cosim 3/3] Evaluating 7 deterministic mixed-signal & Eurorack assertions ...")
-    return _evaluate_cosim_assertions(cosim_dir / "eurorack_cosim.dat", tracks)
+    metrics = _evaluate_cosim_assertions(cosim_dir / "eurorack_cosim.dat", tracks)
+    metrics.adc_ladder = adc_spice.name
+    metrics.dac_ladder = dac_spice.name
+    metrics.spef_file = found_spef.name if found_spef is not None else None
+    return metrics
 
 
 def _evaluate_cosim_assertions(dat_path: Path, tracks: int) -> CosimMetrics:
@@ -376,5 +429,24 @@ if __name__ == "__main__":
         default=100.0,
         help="External Eurorack CV source impedance (100=buffered op-amp, 1000=passive 1k)",
     )
+    ap.add_argument(
+        "--spef",
+        type=Path,
+        default=None,
+        help="Post-PnR SPEF file or directory to inject per-bit driver & output routing RC",
+    )
+    ap.add_argument(
+        "--no-pex",
+        action="store_true",
+        help="Use ideal LVS .spice ladders instead of Magic .pex.spice even when present",
+    )
     args = ap.parse_args()
-    print(run_eurorack_cosim(gen_dir=args.gen_dir, tracks=args.tracks, cv_r_src_ohm=args.cv_r_src))
+    print(
+        run_eurorack_cosim(
+            gen_dir=args.gen_dir,
+            tracks=args.tracks,
+            cv_r_src_ohm=args.cv_r_src,
+            spef_path=args.spef,
+            prefer_pex=not args.no_pex,
+        )
+    )

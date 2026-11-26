@@ -472,8 +472,10 @@ def build_chip(
     dac_bits: int = 8,
     out_dir: Path = REPO_ROOT / "gen",
     check: bool = False,
+    pex: bool = False,
     sim: bool = False,
     cosim: bool = False,
+    spef_path: Path | None = None,
     run_ll: bool = False,
     dockerized: bool = False,
     render: bool = False,
@@ -543,6 +545,22 @@ def build_chip(
             tracks,
             dockerized=dockerized,
         )
+        spef_dir = out_dir / "final/spef"
+        if spef_dir.is_dir():
+            for spef in sorted(spef_dir.rglob("*.spef")):
+                by_ch = dac.check_dac_parasitics(spef, channels=tracks)
+                print(f"  [SPEF check | {spef.name}] OK: {dac.format_parasitics_summary(by_ch)}")
+
+    if pex:
+        dac.extract_dac_pex(
+            dac_gds,
+            dac_dir,
+            cell_name=dac_cell.name,
+            bits=dac_bits,
+            pins=dac_pins,
+            check_ngspice=check,
+        )
+        adc.extract_adc_pex(adc_gds, adc_dir, pins=adc_pins, check_ngspice=check)
 
     if sim:
         run_rtl_and_gl_sim(out_dir, chip_core_v, adc_col, dac_col, core_v, tracks, gl_netlist=gl_nl)
@@ -550,7 +568,7 @@ def build_chip(
     if cosim:
         from cosim import run_eurorack_cosim
 
-        run_eurorack_cosim(gen_dir=out_dir, tracks=tracks)
+        run_eurorack_cosim(gen_dir=out_dir, tracks=tracks, spef_path=spef_path)
 
     if render:
         dac_png = analog.render_gds(
@@ -591,6 +609,11 @@ if __name__ == "__main__":
         help="Run DRC, LVS, and multi-corner ngspice checks on ADC & DAC macros",
     )
     ap.add_argument(
+        "--pex",
+        action="store_true",
+        help="Extract Magic polygon PEX (.pex.spice) for DAC & ADC ladders (for cosim & GL AMS)",
+    )
+    ap.add_argument(
         "--sim",
         action="store_true",
         help="Run full-chip Verilog RTL simulation (and GL simulation if netlist built)",
@@ -599,6 +622,12 @@ if __name__ == "__main__":
         "--cosim",
         action="store_true",
         help="Run closed-loop Eurorack mixed-signal ngspice d_cosim + Verilator check",
+    )
+    ap.add_argument(
+        "--spef",
+        type=Path,
+        default=None,
+        help="Post-PnR SPEF file or directory to inject into --cosim (default: <out-dir>/final/spef)",
     )
     ap.add_argument(
         "--librelane",
@@ -620,8 +649,10 @@ if __name__ == "__main__":
         dac_bits=args.dac_bits,
         out_dir=args.out_dir,
         check=args.check,
+        pex=args.pex,
         sim=args.sim,
         cosim=args.cosim,
+        spef_path=args.spef,
         run_ll=args.librelane,
         dockerized=args.dockerized,
         render=args.render,

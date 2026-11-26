@@ -19,20 +19,6 @@ XR2R vss drv_term drv3 drv2 drv1 drv0 vsum adc_in r2r_ladder_4bit_sum
 X_CMP vsum cmp vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_1
 .ENDS sc_adc_ramp_1ch_4b
 
-.SUBCKT sc_r2r_dac_8bit vdd vss d7 d6 d5 d4 d3 d2 d1 d0 out
-X_TIEL lo vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__tiel
-X_TERM lo drv_term vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
-X_B0 d0 drv0 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
-X_B1 d1 drv1 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
-X_B2 d2 drv2 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
-X_B3 d3 drv3 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
-X_B4 d4 drv4 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
-X_B5 d5 drv5 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
-X_B6 d6 drv6 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
-X_B7 d7 drv7 vdd vdd vss vss gf180mcu_fd_sc_mcu7t5v0__clkbuf_20
-XR2R vss drv_term drv7 drv6 drv5 drv4 drv3 drv2 drv1 drv0 out r2r_ladder_8bit
-.ENDS sc_r2r_dac_8bit
-
 * Shared PCB 5.00V supply + lumped bondwire/padring resistance (0.15 ohm on VDD & VSS)
 VSUP vdd_pcb 0 5.0
 VGND vss_pcb 0 0.0
@@ -81,18 +67,18 @@ XADC1 vdd_core vss_core a_adc_step_3 a_adc_step_2 a_adc_step_1 a_adc_step_0 pad_
 XADC2 vdd_core vss_core a_adc_step_3 a_adc_step_2 a_adc_step_1 a_adc_step_0 pad_adc_2 cmp_a_2 sc_adc_ramp_1ch_4b
 XADC3 vdd_core vss_core a_adc_step_3 a_adc_step_2 a_adc_step_1 a_adc_step_0 pad_adc_3 cmp_a_3 sc_adc_ramp_1ch_4b
 
-* 5x Foundry asig_5p0 pads + 5x sc_r2r_dac_8bit (VDD VSS d[7..0] out) + Doepfer A-100 loads (1k -> 220pF || 100k)
+* 5x Foundry asig_5p0 pads + 5x sc_r2r_dac_8bit_ch0..4 (VDD VSS d[7..0] out) + Doepfer A-100 loads (1k -> 220pF || 100k)
 XPAD_DAC0 pad_dac_0 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
 XPAD_DAC1 pad_dac_1 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
 XPAD_DAC2 pad_dac_2 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
 XPAD_DAC3 pad_dac_3 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
 XPAD_DAC4 pad_dac_4 vdd_io vss_io vdd_core vss_core gf180mcu_fd_io__asig_5p0
 
-XDAC0 vdd_core vss_core a_dac_d_0_7 a_dac_d_0_6 a_dac_d_0_5 a_dac_d_0_4 a_dac_d_0_3 a_dac_d_0_2 a_dac_d_0_1 a_dac_d_0_0 pad_dac_0 sc_r2r_dac_8bit
-XDAC1 vdd_core vss_core a_dac_d_1_7 a_dac_d_1_6 a_dac_d_1_5 a_dac_d_1_4 a_dac_d_1_3 a_dac_d_1_2 a_dac_d_1_1 a_dac_d_1_0 pad_dac_1 sc_r2r_dac_8bit
-XDAC2 vdd_core vss_core a_dac_d_2_7 a_dac_d_2_6 a_dac_d_2_5 a_dac_d_2_4 a_dac_d_2_3 a_dac_d_2_2 a_dac_d_2_1 a_dac_d_2_0 pad_dac_2 sc_r2r_dac_8bit
-XDAC3 vdd_core vss_core a_dac_d_3_7 a_dac_d_3_6 a_dac_d_3_5 a_dac_d_3_4 a_dac_d_3_3 a_dac_d_3_2 a_dac_d_3_1 a_dac_d_3_0 pad_dac_3 sc_r2r_dac_8bit
-XDAC4 vdd_core vss_core a_dac_d_4_7 a_dac_d_4_6 a_dac_d_4_5 a_dac_d_4_4 a_dac_d_4_3 a_dac_d_4_2 a_dac_d_4_1 a_dac_d_4_0 pad_dac_4 sc_r2r_dac_8bit
+XDAC0 vdd_core vss_core a_dac_d_0_7 a_dac_d_0_6 a_dac_d_0_5 a_dac_d_0_4 a_dac_d_0_3 a_dac_d_0_2 a_dac_d_0_1 a_dac_d_0_0 pad_dac_0 sc_r2r_dac_8bit_ch0
+XDAC1 vdd_core vss_core a_dac_d_1_7 a_dac_d_1_6 a_dac_d_1_5 a_dac_d_1_4 a_dac_d_1_3 a_dac_d_1_2 a_dac_d_1_1 a_dac_d_1_0 pad_dac_1 sc_r2r_dac_8bit_ch1
+XDAC2 vdd_core vss_core a_dac_d_2_7 a_dac_d_2_6 a_dac_d_2_5 a_dac_d_2_4 a_dac_d_2_3 a_dac_d_2_2 a_dac_d_2_1 a_dac_d_2_0 pad_dac_2 sc_r2r_dac_8bit_ch2
+XDAC3 vdd_core vss_core a_dac_d_3_7 a_dac_d_3_6 a_dac_d_3_5 a_dac_d_3_4 a_dac_d_3_3 a_dac_d_3_2 a_dac_d_3_1 a_dac_d_3_0 pad_dac_3 sc_r2r_dac_8bit_ch3
+XDAC4 vdd_core vss_core a_dac_d_4_7 a_dac_d_4_6 a_dac_d_4_5 a_dac_d_4_4 a_dac_d_4_3 a_dac_d_4_2 a_dac_d_4_1 a_dac_d_4_0 pad_dac_4 sc_r2r_dac_8bit_ch4
 
 R_EURO_PROT0 pad_dac_0 euro_out_0 1k
 C_CABLE0 euro_out_0 0 220p
