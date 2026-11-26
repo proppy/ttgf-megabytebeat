@@ -1,0 +1,17 @@
+`verilator_config
+
+// Waive GF180MCU PDK stdcell/UDP lint, mixed async/clocked UDP rules, and post-PnR netlist
+// lint (e.g., CTS dummy clkload* buffers with unconnected outputs) without relaxing RTL lint.
+lint_off -file "*gf180mcu_fd_sc_mcu7t5v0*"
+lint_off -file "*gate_level_netlist.v"
+lint_off -file "*.pnl.v"
+lint_off -file "*.nl.v"
+lint_off -rule MULTIDRIVEN -file "*primitives.v"
+lint_off -rule BLKANDNBLK -file "*primitives.v"
+
+// Keep analog macro instances & chip top intact and scope VPI reflection strictly to testbench
+// and passive R-2R macro pins (shrinks GL Vtop__Syms__Slow.cpp from ~27 MB to ~19 KB on 5k cells).
+no_inline -module "tt_um_proppy_megabytebeat"
+no_inline -module "r2r_ladder_8bit"
+public_flat_rw -module "tb" -var "*"
+public_flat_rw -module "r2r_ladder_8bit" -var "*"

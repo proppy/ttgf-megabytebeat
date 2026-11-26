@@ -12,7 +12,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
-      - name: Generate Verilog for megabytebeat
+      - name: Generate SystemVerilog for megabytebeat
         uses: ./.github/actions/xls-action
         with:
           xls-repo: proppy/xls
@@ -21,13 +21,14 @@ jobs:
           dslx-top: megabytebeat
           ir-path: src/megabytebeat.ir
           opt-ir-path: src/megabytebeat.opt.ir
-          verilog-path: src/megabytebeat.v
+          verilog-path: src/megabytebeat.sv
           verilog-module-name: megabytebeat
           verilog-reset-signal-name: reset
-          use-system-verilog: false
+          use-system-verilog: true
           clock-period-ps: 488281
           delay-model: gf180mcu_3v3
           area-model: gf180mcu_3v3
+          ffi-fallback-delay-ps: 500
           artifact-name: xls-generated-megabytebeat
 
 

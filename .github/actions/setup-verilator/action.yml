@@ -1,0 +1,39 @@
+name: Setup Verilator
+description: Install prebuilt Verilator (5.054+, >= LibreLane 3.0.17's 5.044; required for GF180MCU UDP buf strength specifiers in GL).
+
+inputs:
+  verilator-version:
+    description: Verilator release tag from veryl-lang/verilator-package (GF180MCU GL requires >= v5.054).
+    required: false
+    default: v5.054
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Verilator ${{ inputs.verilator-version }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ ! -f /usr/include/lz4.h ]; then
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq liblz4-dev zlib1g-dev
+        fi
+        VLT_DIR="${RUNNER_TEMP}/verilator-${{ inputs.verilator-version }}"
+        if [ ! -x "${VLT_DIR}/bin/verilator" ]; then
+          mkdir -p "${VLT_DIR}"
+          ZIP_PATH="${RUNNER_TEMP}/verilator.zip"
+          curl --fail --show-error --silent -L \
+            "https://github.com/veryl-lang/verilator-package/releases/download/${{ inputs.verilator-version }}/verilator-ubuntu-24.04.zip" \
+            -o "${ZIP_PATH}"
+          unzip -q -o "${ZIP_PATH}" -d "${VLT_DIR}"
+          rm -f "${ZIP_PATH}"
+          if ! command -v mold >/dev/null 2>&1; then
+            sed -i 's/-fuse-ld=mold//g' "${VLT_DIR}/include/verilated.mk"
+          fi
+          if ! command -v ccache >/dev/null 2>&1; then
+            sed -i 's/^OBJCACHE[[:space:]]*?=.*ccache.*/OBJCACHE ?=/' "${VLT_DIR}/include/verilated.mk"
+          fi
+        fi
+        echo "VERILATOR_ROOT=${VLT_DIR}" >> "${GITHUB_ENV}"
+        echo "${VLT_DIR}/bin" >> "${GITHUB_PATH}"
+        "${VLT_DIR}/bin/verilator" --version

@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       sync_fork:
-        description: "Push updated macro commit to proppy/wafer_space_RUN3_sample:megabytebeat-sync"
+        description: "Push updated macro + ring/test commit to proppy/wafer_space_RUN3_sample:megabytebeat-sync"
         type: boolean
         default: true
 
@@ -34,16 +34,48 @@ jobs:
           clock-period-ps: 488281
           delay-model: gf180mcu_5v0
           area-model: gf180mcu_5v0
+          ffi-fallback-delay-ps: 500
           artifact-name: xls-generated-megabytebeat-ishikai
 
-      - name: Setup GF180MCU PDK
+      - name: Setup GF180MCU PDK (ISHI-KAI LibreLane 3.1)
         uses: TinyTapeout/ciel-action@v1
         with:
           pdk_name: gf180mcuD
           pdk_version: 792ef67037d74c8c51811eab3ce23cf793491296
           pdk_root: ${{ runner.temp }}/pdk
 
-      - name: Setup Python
+      - name: Setup GF180MCU PDK (analog DRC/LVS/PEX)
+        uses: TinyTapeout/ciel-action@v1
+        with:
+          pdk_name: gf180mcuD
+          pdk_version: 0fe599b2afb6708d281543108caf8310912f54af
+          pdk_root: ${{ runner.temp }}/pdk_analog
+
+      - name: Setup KLayout
+        uses: ./.github/actions/setup-klayout
+
+      - name: Setup Magic
+        uses: ./.github/actions/setup-magic
+
+      - name: Install ngspice
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ngspice
+
+      - name: Setup uv & Python 3.12
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Build & verify passive r2r_ladder_8bit macro
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk_analog
+        run: uv run python src/dac.py --out-dir gen/dac
+
+      - name: Setup Python for LibreLane 3.1
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -51,7 +83,7 @@ jobs:
       - name: Install LibreLane
         run: pip install --pre "librelane==3.1.0.dev6"
 
-      - name: Harden megabytebeat_macro (LibreLane Classic, VDD_BB)
+      - name: Harden megabytebeat_macro (LibreLane Classic, VDD_BB, 5x R-2R DAC)
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
         run: |
@@ -66,6 +98,11 @@ jobs:
             --scl gf180mcu_fd_sc_mcu7t5v0 \
             --save-views-to ishikai/final \
             ishikai/config.yaml
+
+      - name: Verify post-PnR 5x DAC routing parasitics in SPEF
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+        run: uv run python src/dac.py --check-spef ishikai/final/spef
 
       - name: Stage and validate drop-in bundle
         run: |
@@ -100,8 +137,9 @@ jobs:
             https://github.com/ishi-kai/wafer_space_RUN3_sample.git \
             upstream_ishikai
 
-      - name: Drop updated megabytebeat_macro into upstream tree
+      - name: Apply wafer_space.patch and drop updated megabytebeat_macro into upstream tree
         run: |
+          git -C upstream_ishikai apply "$PWD/ishikai/wafer_space.patch"
           rm -rf upstream_ishikai/chip/macros/megabytebeat
           mkdir -p upstream_ishikai/chip/macros/megabytebeat
           cp -a ishikai_bundle/. upstream_ishikai/chip/macros/megabytebeat/
@@ -182,13 +220,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add -A chip/macros/megabytebeat
+          git add -A chip/macros/megabytebeat chip/src chip/librelane chip/cocotb
           if git diff --cached --quiet; then
-            echo "No changes to chip/macros/megabytebeat; skipping push."
+            echo "No changes to chip/macros/megabytebeat or ring/test overlay; skipping push."
             exit 0
           fi
 
-          git commit -m "chore(megabytebeat): sync macro from ${SOURCE_REPO}@${SHORT_SHA}" \
+          git commit -m "chore(megabytebeat): sync macro + ring/test from ${SOURCE_REPO}@${SHORT_SHA}" \
             -m "Source commit: https://github.com/${SOURCE_REPO}/commit/${SOURCE_SHA}" \
             -m "Source message: ${SOURCE_SUBJECT}"
 

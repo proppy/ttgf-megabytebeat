@@ -1,2 +1,5 @@
 pytest==8.4.2
 cocotb==2.1.0
+cocotbext-ams @ git+https://github.com/proppy/cocotbext-ams.git@5d103964f23e0f88988ce89d00c6e98d1808da0d
+kfactory>=2.4.4,<2.5
+networkx>=3.0

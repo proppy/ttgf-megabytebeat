@@ -9,21 +9,46 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install iverilog
-        shell: bash
-        run: sudo apt-get update && sudo apt-get install -y iverilog
+      - name: Setup KLayout
+        uses: ./.github/actions/setup-klayout
 
-      # Set Python up and install cocotb
-      - name: Setup python
-        uses: actions/setup-python@v6
+      - name: Setup Magic
+        uses: ./.github/actions/setup-magic
+
+      - name: Setup Verilator
+        uses: ./.github/actions/setup-verilator
+
+      - name: Install ngspice and libngspice0
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ngspice libngspice0
+
+      - name: Setup GF180MCU PDK
+        uses: TinyTapeout/ciel-action@v1
         with:
-          python-version: '3.11'
+          pdk_name: gf180mcuD
+          pdk_version: 0fe599b2afb6708d281543108caf8310912f54af
+          pdk_root: ${{ runner.temp }}/pdk
 
-      - name: Install Python packages
-        shell: bash
-        run: pip install -r test/requirements.txt
+      - name: Setup uv & Python 3.12
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
 
-      - name: Generate Verilog for megabytebeat
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Verify native tool versions match LibreLane
+        run: uv run python src/tools.py
+
+      - name: Verify R-2R ladder & 8-bit DAC (DRC, LVS, Magic PEX, 256-code PVT ngspice, render)
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+        run: |
+          uv run python src/dac.py --width 4 --l-1r 6.0 --l-2r 5.42 --sum-res --out-dir gen/r2r4
+          uv run python src/dac.py
+
+      - name: Generate SystemVerilog for megabytebeat
         uses: ./.github/actions/xls-action
         with:
           xls-repo: proppy/xls
@@ -32,22 +57,26 @@ jobs:
           dslx-top: megabytebeat
           ir-path: src/megabytebeat.ir
           opt-ir-path: src/megabytebeat.opt.ir
-          verilog-path: src/megabytebeat.v
+          verilog-path: src/megabytebeat.sv
           verilog-module-name: megabytebeat
           verilog-reset-signal-name: reset
-          use-system-verilog: false
+          use-system-verilog: true
           clock-period-ps: 488281
           delay-model: gf180mcu_3v3
           area-model: gf180mcu_3v3
+          ffi-fallback-delay-ps: 500
           artifact-name: xls-generated-megabytebeat
 
-      - name: Run tests
+      - name: Run mixed-signal RTL tests (Verilator + libngspice0 cocotbext-ams)
+        env:
+          PDK_ROOT: ${{ runner.temp }}/pdk
+          AMS_NGSPICE: "1"
         run: |
           cd test
           make clean
-          make
+          WAVES=0 uv run make
           # make will return success even if the tests fail, so check results.xml for failed tests
-          python -m cocotb_tools.check_results results.xml
+          uv run python -m cocotb_tools.check_results results.xml
 
       - name: Test Summary
         uses: test-summary/action@v2.4
@@ -62,5 +91,6 @@ jobs:
           name: test-results
           path: |
             test/tb.fst
+            test/tb.vcd
             test/results.xml
             test/output/*
