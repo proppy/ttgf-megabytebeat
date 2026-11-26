@@ -70,7 +70,8 @@ jobs:
       - name: Verify Bresenham BPM / tap-tempo sync DSLX & SystemVerilog codegen (bpm_sync.x)
         uses: ./.github/actions/xls-action
         with:
-          xls-version: v0.0.0-11174-g32dc47058
+          xls-repo: proppy/xls
+          xls-version: v0.0.0-11264-g628b096fe
           dslx-path: src/bpm_sync.x
           dslx-top: bpm_sync
           ir-path: /tmp/bpm_sync.ir
@@ -80,8 +81,8 @@ jobs:
           verilog-reset-signal-name: reset
           use-system-verilog: true
           clock-period-ps: 30517500
-          delay-model: unit
-          codegen-extra-args: --generator=pipeline --pipeline_stages=1 --flop_inputs=false --flop_outputs=true --reset_active_low=false --reset_asynchronous=false --reset_data_path=true
+          delay-model: gf180mcu_3v3
+          area-model: gf180mcu_3v3
           artifact-name: xls-generated-bpm-sync
 
       - name: Generate SystemVerilog for megabytebeat

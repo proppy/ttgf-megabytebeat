@@ -27,12 +27,14 @@ module megabytebeat_macro (
     input  wire       clk,
     input  wire       rst_n,
     input  wire       ena,
+    input  wire       ui_bpm,
     input  wire [5:0] uio_in,
     output wire [4:0] uo_pwm,
     inout  wire [5:0] ua,
     output wire       vdd_bb_hi_s,
     output wire       vdd_bb_hi_e,
     output wire       vss_lo_s,
+    output wire       vss_lo_w,
     output wire       vss_lo_e
 );
 
@@ -57,7 +59,7 @@ module megabytebeat_macro (
         .Q   (gclk)
     );
 
-    wire tieh_s_raw, tieh_e_raw, tiel_s_raw, tiel_e_raw;
+    wire tieh_s_raw, tieh_e_raw, tiel_s_raw, tiel_w_raw, tiel_e_raw;
     (* keep *) gf180mcu_fd_sc_mcu7t5v0__tieh  u_tieh_s (.Z(tieh_s_raw));
     (* keep *) gf180mcu_fd_sc_mcu7t5v0__buf_8 u_bufh_s (.I(tieh_s_raw), .Z(vdd_bb_hi_s));
     (* keep *) gf180mcu_fd_sc_mcu7t5v0__tieh  u_tieh_e (.Z(tieh_e_raw));
@@ -65,6 +67,8 @@ module megabytebeat_macro (
 
     (* keep *) gf180mcu_fd_sc_mcu7t5v0__tiel  u_tiel_s (.ZN(tiel_s_raw));
     (* keep *) gf180mcu_fd_sc_mcu7t5v0__buf_8 u_bufl_s (.I(tiel_s_raw), .Z(vss_lo_s));
+    (* keep *) gf180mcu_fd_sc_mcu7t5v0__tiel  u_tiel_w (.ZN(tiel_w_raw));
+    (* keep *) gf180mcu_fd_sc_mcu7t5v0__buf_8 u_bufl_w (.I(tiel_w_raw), .Z(vss_lo_w));
     (* keep *) gf180mcu_fd_sc_mcu7t5v0__tiel  u_tiel_e (.ZN(tiel_e_raw));
     (* keep *) gf180mcu_fd_sc_mcu7t5v0__buf_8 u_bufl_e (.I(tiel_e_raw), .Z(vss_lo_e));
     /* verilator lint_on PINMISSING */
@@ -82,6 +86,7 @@ module megabytebeat_macro (
     assign vdd_bb_hi_s = 1'b1;
     assign vdd_bb_hi_e = 1'b1;
     assign vss_lo_s    = 1'b0;
+    assign vss_lo_w    = 1'b0;
     assign vss_lo_e    = 1'b0;
 `endif
 
@@ -97,7 +102,7 @@ module megabytebeat_macro (
     /* verilator lint_on UNDRIVEN */
 
     tt_um_proppy_megabytebeat u_tt (
-        .ui_in   (8'h00),
+        .ui_in   ({7'b0, ui_bpm}),
         .uo_out  (uo_raw),
         .uio_in  ({2'b00, uio_in}),
         .uio_out (uio_out_unused),
