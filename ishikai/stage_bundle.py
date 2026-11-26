@@ -47,12 +47,23 @@ REQUIRED_LIB_CORNERS = (
 ZERO_METRIC_GATES = (
     "flow__errors__count",
     "route__drc_errors",
-    "route__antenna_violation_count",
     "design__xor_difference__count",
     "magic__drc_error__count",
     "klayout__drc_error__count",
     "design__lvs_error__count",
 )
+
+ANTENNA_METRIC_KEYS = (
+    "route__antenna_violation__count",
+    "route__antenna_violation_count",
+)
+
+
+def _get_antenna_violations(metrics: dict) -> int | None:
+    for key in ANTENNA_METRIC_KEYS:
+        if key in metrics and metrics[key] is not None:
+            return metrics[key]
+    return None
 
 
 def rewrite_config_for_ishikai(config_text: str) -> str:
@@ -130,6 +141,10 @@ def validate_bundle(bundle_dir: Path) -> dict:
         if val != 0:
             failures.append(f"{key}={val} (expected 0)")
 
+    antenna_val = _get_antenna_violations(metrics)
+    if antenna_val != 0:
+        failures.append(f"antenna_violations={antenna_val} (expected 0)")
+
     for key in ("timing__setup__wns", "timing__hold__wns"):
         val = metrics.get(key)
         if val is None or val < 0:
@@ -147,6 +162,7 @@ def format_summary(metrics: dict) -> str:
     stdcells = metrics.get("design__instance__count__stdcell", "?")
     setup_ws = metrics.get("timing__setup__ws", "?")
     hold_ws = metrics.get("timing__hold__ws", "?")
+    antenna_val = _get_antenna_violations(metrics)
     lines = [
         "### ISHI会 `megabytebeat_macro` Signoff Summary",
         "",
@@ -156,7 +172,7 @@ def format_summary(metrics: dict) -> str:
         f"| Stdcells / Utilization | `{stdcells}` (`{util_pct:.1f}%`) |",
         f"| Magic DRC / KLayout DRC | `{metrics.get('magic__drc_error__count')}` / `{metrics.get('klayout__drc_error__count')}` |",
         f"| KLayout XOR / Netgen LVS | `{metrics.get('design__xor_difference__count')}` / `{metrics.get('design__lvs_error__count')}` |",
-        f"| Antenna / Route DRC | `{metrics.get('route__antenna_violation_count')}` / `{metrics.get('route__drc_errors')}` |",
+        f"| Antenna / Route DRC | `{antenna_val}` / `{metrics.get('route__drc_errors')}` |",
         f"| STA Setup WS / Hold WS | `{setup_ws}` ns / `{hold_ws}` ns |",
         "",
     ]
