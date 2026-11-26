@@ -126,7 +126,7 @@ jobs:
         with:
           name: tt_submission
 
-      - name: Download passive DAC SPICE & post-PnR SPEF
+      - name: Download passive ADC/DAC SPICE & post-PnR SPEF
         uses: actions/download-artifact@v7
         with:
           name: dac-spice

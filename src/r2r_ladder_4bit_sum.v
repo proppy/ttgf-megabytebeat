@@ -13,7 +13,7 @@ module r2r_ladder_4bit_sum (
     input  wire       sum_in
 );
 `ifdef SIM
-    // In GL cocotb sim, testbench drives comparator PWM pulse width on adc_in -> sum_in -> out -> clkbuf_1
+    // In GL cocotb sim, testbench drives comparator output on adc_in -> sum_in -> out -> aoi21_1 -> inv_1
     assign out = sum_in;
     wire _unused = &{term, in, 1'b0};
 `endif
