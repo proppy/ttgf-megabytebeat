@@ -10,13 +10,30 @@ pub fn the42melody(t: u32, a: u4, b: u4, c: u4, d: u4) -> u8 {
     s as u8
 }
 
+fn umod_u32_u9(n: u32, d: u9) -> u9 {
+    let d10 = d as u10;
+    for (i, rem): (u32, u9) in u32:0..u32:32 {
+        let bit = n[(u32:31 - i)+:u1];
+        let cand: u10 = rem ++ bit;
+        if cand >= d10 { (cand - d10) as u9 } else { cand as u9 }
+    }(u9:0)
+}
+
 pub fn fractaltrees(t: u32, a: u4, b: u4, c: u4, d: u4) -> u8 {
-    let ab = (b ++ a) as u32;
-    let ab = if ab == u32:0 { u32:1 } else { ab };
-    let cd = (d ++ c) as u32;
-    let cd_257 = cd + u32:2;
-    let s = t | t % ab | t % cd_257;
-    s as u8
+    let ab8 = b ++ a;
+    let ab: u9 = if ab8 == u8:0 { u9:1 } else { ab8 as u9 };
+    let cd_257: u9 = ((d ++ c) as u9) + u9:2;
+    let r0 = umod_u32_u9(t, ab) as u8;
+    let r1 = umod_u32_u9(t, cd_257) as u8;
+    (t as u8) | r0 | r1
+}
+
+#[test]
+fn umod_u32_u9_test() {
+    assert_eq(umod_u32_u9(u32:0x12345678, u9:42), (u32:0x12345678 % u32:42) as u9);
+    assert_eq(umod_u32_u9(u32:0xffffffff, u9:257), (u32:0xffffffff % u32:257) as u9);
+    assert_eq(umod_u32_u9(u32:100000, u9:1), u9:0);
+    assert_eq(umod_u32_u9(u32:987654321, u9:255), (u32:987654321 % u32:255) as u9);
 }
 
 pub fn untitleddroid(t: u32, a: u4, b: u4, c: u4, d: u4) -> u8 {
