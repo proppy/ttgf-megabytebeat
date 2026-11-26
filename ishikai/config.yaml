@@ -118,6 +118,10 @@ MANUAL_GLOBAL_PLACEMENTS:
 RT_MAX_LAYER: Metal4
 
 # PDN: clean Metal4 vertical + Metal5 horizontal grid & core ring with exposed pins
+# Custom PDN_CFG omits the default -macro grid (pure-passive R-2R macros have no PG pins).
+PDN_CFG: dir::pdn_cfg.tcl
+PDN_HORIZONTAL_HALO: 4.8
+PDN_VERTICAL_HALO: 4.0
 PDN_CORE_RING: True
 PDN_CORE_RING_VWIDTH: 8
 PDN_CORE_RING_HWIDTH: 8

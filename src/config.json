@@ -31,7 +31,7 @@
   "//": "https://tinytapeout.com/faq/#how-can-i-map-an-additional-external-clock-to-one-of-the-gpios",
   "CLOCK_PORT": "clk",
 
-  "//": "Mixed-signal 3x2 analog tile + passive R-2R DAC macro configuration:",
+  "//": "Mixed-signal 2x2 analog tile + passive R-2R DAC macro configuration:",
   "DESIGN_NAME": "tt_um_proppy_megabytebeat",
   "USE_SLANG": true,
   "VERILOG_FILES": [
@@ -107,8 +107,8 @@
     "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[0].u_buf": {"location": [7.84, 62.72], "orientation": "FS"},
     "u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.u_term": {"location": [26.88, 66.64], "orientation": "FN"}
   },
-  "FP_DEF_TEMPLATE": "dir::../gen/tt_analog_3x2.def",
-  "DIE_AREA": [0, 0, 1075.76, 325.36],
+  "FP_DEF_TEMPLATE": "dir::../gen/tt_analog_2x2.def",
+  "DIE_AREA": [0, 0, 711.2, 325.36],
   "VDD_PIN": "VPWR",
   "GND_PIN": "VGND",
   "VDD_PIN_VOLTAGE": 3.3,

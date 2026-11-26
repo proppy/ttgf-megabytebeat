@@ -29,7 +29,7 @@ jobs:
           clock-period-ps: 488281
           delay-model: gf180mcu_3v3
           area-model: gf180mcu_3v3
-          codegen-extra-args: --ffi_fallback_delay_ps=500 --generator=pipeline --pipeline_stages=1 --flop_inputs=false --flop_outputs=false --reset_active_low=false --reset_asynchronous=false --reset_data_path=true
+          ffi-fallback-delay-ps: 500
           artifact-name: xls-generated-megabytebeat
 
       - name: Setup GF180MCU PDK
@@ -45,6 +45,9 @@ jobs:
       - name: Setup Magic
         uses: ./.github/actions/setup-magic
 
+      - name: Setup Verilator
+        uses: ./.github/actions/setup-verilator
+
       - name: Install ngspice
         run: |
           sudo apt-get update
@@ -58,14 +61,15 @@ jobs:
       - name: Install Python dependencies
         run: uv sync
 
-      - name: Build & verify passive r2r_ladder_8bit macro & harden 3x2 analog tile
+      - name: Build & verify passive r2r_ladder_8bit macro & harden 2x2 analog tile
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
         run: |
+          uv run python src/tools.py
           uv run python src/dac.py --out-dir gen/dac
           curl -fsSL \
-            https://raw.githubusercontent.com/TinyTapeout/tt-support-tools/main/tech/gf180mcuD/def/analog/tt_analog_3x2.def \
-            -o gen/tt_analog_3x2.def
+            https://raw.githubusercontent.com/TinyTapeout/tt-support-tools/main/tech/gf180mcuD/def/analog/tt_analog_2x2.def \
+            -o gen/tt_analog_2x2.def
           uv run librelane \
             -m "$PDK_ROOT" \
             -m "$PWD" \
@@ -77,7 +81,6 @@ jobs:
             --scl gf180mcu_fd_sc_mcu7t5v0 \
             --save-views-to gen/final \
             src/config.json
-          uv run python src/tools.py --tools magic,klayout --verify-librelane
           uv run python src/dac.py --check-spef gen/final/spef
 
       - name: Upload passive DAC SPICE, Magic PEX & post-PnR SPEF for GL AMS co-sim
@@ -147,9 +150,6 @@ jobs:
 
       - name: Setup Verilator
         uses: ./.github/actions/setup-verilator
-
-      - name: Verify native tool versions match LibreLane
-        run: python src/tools.py --tools verilator
 
       - name: Run GL tests (4-state Icarus + Verilator + ngspice AMS)
         env:

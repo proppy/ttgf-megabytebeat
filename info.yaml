@@ -6,7 +6,7 @@ project:
   description:  "Best-of compilation of bytebeat 2011's greatest hits on-a-chip with 5x 8-bit R-2R DAC analog outputs."
   language:     "xls"
   clock_hz:     2048000  # 8000 * 256
-  tiles: "3x2"
+  tiles: "2x2"
   analog_pins: 5
   uses_vapwr: false
   top_module:  "tt_um_proppy_megabytebeat"

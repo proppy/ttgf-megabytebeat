@@ -1,7 +1,7 @@
 # Copyright 2026 Google LLC.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Timing constraints for Tiny Tapeout 3x2 analog `tt_um_proppy_megabytebeat` (2.048 MHz).
+# Timing constraints for Tiny Tapeout 2x2 analog `tt_um_proppy_megabytebeat` (2.048 MHz).
 # Mirrors LibreLane's base.sdc for digital I/O while:
 #   1. Excluding passive analog inout ports `ua[*]` from digital delay/load/driving-cell checks.
 #   2. Constraining `u_megabytebeat`'s 8 kHz sample-rate registers (`____t`, `____pcm`, enabled

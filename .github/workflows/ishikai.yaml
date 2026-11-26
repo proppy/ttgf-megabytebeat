@@ -34,7 +34,7 @@ jobs:
           clock-period-ps: 488281
           delay-model: gf180mcu_5v0
           area-model: gf180mcu_5v0
-          codegen-extra-args: --ffi_fallback_delay_ps=500 --generator=pipeline --pipeline_stages=1 --flop_inputs=false --flop_outputs=false --reset_active_low=false --reset_asynchronous=false --reset_data_path=true
+          ffi-fallback-delay-ps: 500
           artifact-name: xls-generated-megabytebeat-ishikai
 
       - name: Setup GF180MCU PDK (ISHI-KAI LibreLane 3.1)
@@ -137,12 +137,12 @@ jobs:
             https://github.com/ishi-kai/wafer_space_RUN3_sample.git \
             upstream_ishikai
 
-      - name: Drop updated megabytebeat_macro and chip ring/test overlay into upstream tree
+      - name: Apply wafer_space.patch and drop updated megabytebeat_macro into upstream tree
         run: |
+          git -C upstream_ishikai apply "$PWD/ishikai/wafer_space.patch"
           rm -rf upstream_ishikai/chip/macros/megabytebeat
           mkdir -p upstream_ishikai/chip/macros/megabytebeat
           cp -a ishikai_bundle/. upstream_ishikai/chip/macros/megabytebeat/
-          cp -a ishikai/chip/. upstream_ishikai/chip/
 
       - name: Setup GF180MCU PDK
         uses: TinyTapeout/ciel-action@v1

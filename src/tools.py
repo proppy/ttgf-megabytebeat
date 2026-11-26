@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import argparse
 from collections.abc import Iterable
 from dataclasses import dataclass
 import os
@@ -115,12 +114,17 @@ def check_native_tools(tools: Iterable[str] | None = None) -> list[ToolVersionCh
     return results
 
 
-def check_librelane_package_version() -> ToolVersionCheck | None:
+def check_librelane_package_version() -> ToolVersionCheck:
     """Verify installed Python `librelane.__version__` matches `LIBRELANE_VERSION`."""
     try:
         import librelane
     except ImportError:
-        return None
+        return ToolVersionCheck(
+            name="librelane",
+            expected=LIBRELANE_VERSION,
+            actual=None,
+            source=None,
+        )
     return ToolVersionCheck(
         name="librelane",
         expected=LIBRELANE_VERSION,
@@ -136,7 +140,7 @@ def check_librelane_container_tools(
     """Query the LibreLane Docker image directly to verify `LIBRELANE_TOOL_VERSIONS` parity."""
     docker_bin = shutil.which("docker")
     if docker_bin is None:
-        raise FileNotFoundError("docker is required for --verify-librelane")
+        raise FileNotFoundError("docker is required to verify LibreLane container tools")
     img = image or librelane_docker_image()
     names = tuple(tools) if tools is not None else tuple(LIBRELANE_TOOL_VERSIONS)
     shell_parts = [f"echo '=== {n} ==='; {' '.join(_VERSION_SPECS[n][0])}" for n in names]
@@ -167,31 +171,11 @@ def check_librelane_container_tools(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Verify native EDA tool versions match LibreLane.")
-    ap.add_argument(
-        "--tools",
-        type=str,
-        default=None,
-        help="Comma-separated tools to check (default: magic,klayout,verilator)",
-    )
-    ap.add_argument(
-        "--verify-librelane",
-        action="store_true",
-        help="Also verify pinned versions against the LibreLane Docker container image",
-    )
-    args = ap.parse_args()
-    names = (
-        [t.strip() for t in args.tools.split(",") if t.strip()]
-        if args.tools
-        else list(LIBRELANE_TOOL_VERSIONS)
-    )
-
-    checks: list[ToolVersionCheck] = []
-    if pkg_check := check_librelane_package_version():
-        checks.append(pkg_check)
-    checks.extend(check_native_tools(names))
-    if args.verify_librelane:
-        checks.extend(check_librelane_container_tools(tools=names))
+    checks: list[ToolVersionCheck] = [
+        check_librelane_package_version(),
+        *check_native_tools(),
+        *check_librelane_container_tools(),
+    ]
 
     for c in checks:
         status = "OK" if c.ok else "MISMATCH"

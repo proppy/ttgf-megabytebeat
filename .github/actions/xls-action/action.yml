@@ -56,8 +56,8 @@ inputs:
     required: false
     type: string
     default: ''
-  codegen-extra-args:
-    description: extra arguments passed to codegen_main.
+  ffi-fallback-delay-ps:
+    description: fallback delay in picoseconds for extern_verilog FFI calls.
     required: false
     type: string
     default: ''
@@ -92,16 +92,19 @@ runs:
       shell: bash
     - name: generate Verilog
       run: |
-        codegen_main \
-          --module_name=${{ inputs.verilog-module-name }} \
-          --use_system_verilog=${{ inputs.use-system-verilog }} \
-          --clock_period_ps=${{ inputs.clock-period-ps }} \
-          --delay_model=${{ inputs.delay-model }} \
-          --reset=${{ inputs.verilog-reset-signal-name }} \
-          --output_schedule_path=${{ inputs.opt-ir-path }}.sched \
-          --output_schedule_ir_path=${{ inputs.opt-ir-path }}.sched.ir \
-          ${{ inputs.codegen-extra-args }} \
-          ${{ inputs.opt-ir-path }} > ${{ inputs.verilog-path }}
+        CODEGEN_ARGS=(
+          --module_name="${{ inputs.verilog-module-name }}"
+          --use_system_verilog="${{ inputs.use-system-verilog }}"
+          --clock_period_ps="${{ inputs.clock-period-ps }}"
+          --delay_model="${{ inputs.delay-model }}"
+          --reset="${{ inputs.verilog-reset-signal-name }}"
+          --output_schedule_path="${{ inputs.opt-ir-path }}.sched"
+          --output_schedule_ir_path="${{ inputs.opt-ir-path }}.sched.ir"
+        )
+        if [[ -n "${{ inputs.ffi-fallback-delay-ps }}" ]]; then
+          CODEGEN_ARGS+=(--ffi_fallback_delay_ps="${{ inputs.ffi-fallback-delay-ps }}")
+        fi
+        codegen_main "${CODEGEN_ARGS[@]}" ${{ inputs.opt-ir-path }} > ${{ inputs.verilog-path }}
       shell: bash
     - name: report scheduled delay
       run: |

@@ -116,6 +116,7 @@ def stage_bundle(repo_root: Path, final_dir: Path, out_dir: Path) -> dict:
 
     shutil.copy2(ishikai_dir / "megabytebeat_macro.sv", bundle_src / "megabytebeat_macro.sv")
     shutil.copy2(ishikai_dir / "megabytebeat_macro.sdc", out_dir / "megabytebeat_macro.sdc")
+    shutil.copy2(ishikai_dir / "pdn_cfg.tcl", out_dir / "pdn_cfg.tcl")
     shutil.copy2(ishikai_dir / "pin_order.cfg", out_dir / "pin_order.cfg")
 
     config_text = (ishikai_dir / "config.yaml").read_text(encoding="utf-8")
