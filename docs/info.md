@@ -32,41 +32,36 @@
 
 Extended Play of some of the 2011's BYTEBEAT greatest hits on-a-chip:
 
-| Track (`uio` sel) | PWM Pin | Track | Artist |
-| ----------------- | ------- | ----- | ------ |
-| `0` | `uo[0]` | the 42 melody | people on irc |
-| `1` | `uo[1]` | fractal trees | danharaj |
-| `2` | `uo[2]` | untitled | droid |
-| `3` | `uo[3]` | a tune to share | Niklas_Roy |
-| `4` | `uo[7]` | sierpinski harmony | miiro |
+| Track | Formula | Artist | Original Params |
+| ----- | ------- | ------ | --------------- |
+| `0` | `t*({b,a}&t>>{d,c})` | people on irc (*the 42 melody*) | `a=0xa,b=0x2,c=0xa,d=0x0` |
+| `1` | `t\|t%{b,a}\|t%(2+{d,c})` | danharaj (*fractal trees*) | `a=0xf,b=0xf,c=0xf,d=0xf` |
+| `2` | `t>>a&b?t>>c:-t>>d` | droid (*untitled*) | `a=0x6,b=0x1,c=0x5,d=0x4` |
+| `3` | `t*(t>>a\|t>>b)&{d,c}` | Niklas_Roy (*a tune to share*) | `a=0x9,b=0xd,c=0x0,d=0x1` |
+| `4` | `t*a&(t>>b)\|t*c&(t>>d)` | miiro (*sierpinski harmony*) | `a=0x5,b=0x7,c=0x3,d=0xa` |
 
 ## How it works
 
-The unified XLS core digitizes 4× analog CV inputs (`a = ua[0]`, `b = ua[1]`, `c = ua[2]`, `d = ua[3]`) via four on-chip **4-bit resistive-summing ramp ADCs** (`r2r_ladder_4bit_sum`, `16`-step ramp at `32 kHz` → `2 kHz` parameter refresh) and computes 5 concurrent 8-bit PCM bytebeat streams at `8 kHz` (`2.048 MHz / 256`):
+This TTGF26c mixed-signal design (`2x2` analog slot, Digital-on-Top) compiles the entire mixed-signal control and synthesis pipeline from a single fused XLS DSLX proc (`src/megabytebeat.x`) running at `32.768 kHz` (`2.097152 MHz / 64`):
 
-| Track (`uio` sel) | PWM Pin | Formula | Original Params |
-| ----------------- | ------- | ------- | --------------- |
-| `0` | `uo[0]` | `t*({b,a}&t>>{d,c})` | `a=0xa,b=0x2,c=0xa,d=0x0` |
-| `1` | `uo[1]` | `t\|t%{b,a}\|t%(2+{d,c})` | `a=0xf,b=0xf,c=0xf,d=0xf` |
-| `2` | `uo[2]` | `t>>a&b?t>>c:-t>>d` | `a=0x6,b=0x1,c=0x5,d=0x4` |
-| `3` | `uo[3]` | `t*(t>>a\|t>>b)&{d,c}` | `a=0x9,b=0xd,c=0x0,d=0x1` |
-| `4` | `uo[7]` | `t*a&(t>>b)\|t*c&(t>>d)` | `a=0x5,b=0x7,c=0x3,d=0xa` |
+- **4× 4-bit resistive-summing ramp ADCs (`ua[3:0]`):** Sample analog CV/potentiometer voltages for parameters `a, b, c, d`. Each `sc_adc_ramp_1ch_4b` channel (pure-passive `r2r_ladder_4bit_sum` poly-resistor macro `28.00 × 15.12 µm`, `L_2R = 5.82 µm` + `clkinv_12` drivers + `aoi21_1` comparator) is instantiated directly from DSLX via `#[extern_verilog]`.
+- **32.768 kHz Bresenham BPM / tap-tempo sync (`ui_in[0]`):** Synchronized and edge-stretched across `/64` ticks; locks playback rate to external sync pulses (default `120 BPM` = `8.192 kHz` sample rate).
+- **5-track XLS bytebeat synthesizer:** Evaluates all 5 canonical formulas concurrently (`umod_u32_u9` restoring divider in `fractaltrees` for compact GF180 area), driving 5× 8-bit PWM outputs on `uo_out[{7,3,2,1,0}]`.
+- **2× 8-bit poly R-2R DACs (`ua[4]`, `ua[5]`):** Pure-passive `r2r_ladder_8bit` poly-resistor macros (`70.00 × 26.32 µm`, `L_1R = 20.00 µm`, `L_2R = 19.80 µm` trimmed for 3.0–5.5 V PVT monotonic linearity) driven by external `clkbuf_20` stdcells. Select which two tracks feed `ua[4]` / `ua[5]` via `ui_in[3:1]` and `ui_in[6:4]`.
+- **Zero-standby power-gating:** Holding `rst_n = 0` or deselecting the project (`ena = 0`) combinationally clamps all 4 ADC and 2 DAC resistor ladders to `0 V` (`< 10 µA` total core standby).
 
-Outputs are available simultaneously as:
-- **Digital 8-bit PWM** on `uo[0..3]` and `uo[7]` (`256`-clock frames at `2.048 MHz`).
-- **Dual analog outputs** on `ua[4]` (DAC0) and `ua[5]` (DAC1) via two on-chip **8-bit poly-resistor R-2R DACs** (`r2r_ladder_8bit`, `~20.7 kΩ` output impedance, `0..VDD` swing). Select any of the 5 tracks per DAC using `uio[2:0]` (`dac0_sel`, defaults to track `0` for `5..7`) and `uio[5:3]` (`dac1_sel`, defaults to track `1` for `5..7`).
-
-Samples are registered inside the XLS core for glitch-free updates at frame boundaries, and holding reset (`rst_n = 0`) or deselecting the project (`ena = 0`) combinationally clamps all 4 ADC ladders and both DAC ladders to `0 V` for near-zero standby leakage.
+> **Note on characterization / test modes:** Legacy multi-mode muxes are omitted to keep the `2x2` tile lean and congestion-free. Lightweight bring-up/characterization modes can be reintroduced cleanly in a follow-up by tapping directly into the fused XLS core's generated signals (`_adc_step_s`, `_adc_params_s`, `_adc_params_s_vld`, `_pcm_s`, `_pcm_s_vld`).
 
 ## How to test
 
-- **Analog CV inputs (`ua[0..3]`):** Drive `ua[0..3]` with `0..3.3 V` analog control voltages (e.g., potentiometers or buffered CV sources with low source impedance, `< 1 kΩ` recommended; the Tiny Tapeout analog mux adds `~300–500 Ω` in series with the `6.3 kΩ` summing resistor, shifting the bottom trip point down by ~0.5 LSB while remaining monotonic).
-- **Analog R-2R DACs (`ua[4..5]`):** Connect `ua[4]` and `ua[5]` through a high-impedance buffer, op-amp, or line-in (`>= 100 kΩ` input impedance; do not drive a low-impedance speaker directly from the `~20.7 kΩ` passive R-2R ladder). Use `uio[2:0]` and `uio[5:3]` to choose which tracks are routed to `ua[4]` and `ua[5]`.
-- **Digital PWM (`uo[0..3]`, `uo[7]`):** Connect a speaker or Tiny Tapeout Audio PMOD to the PWM pin you want to play.
+1. Drive `clk` at `2.097152 MHz` (`64 × 32.768 kHz`), hold `rst_n = 0` for at least 4 clocks, then release `rst_n = 1`.
+2. Apply `0–3.3 V` analog CV or potentiometer voltages to `ua[3:0]` for parameters `a, b, c, d`.
+3. Select the tracks routed to the two analog DAC outputs (`ua[4]`, `ua[5]`) with `ui_in[3:1]` (`dac0_sel`, `0..4`) and `ui_in[6:4]` (`dac1_sel`, `0..4`).
+4. Optionally pulse `ui_in[0]` (`bpm_in`) to lock the bytebeat sample rate to an external BPM / tap-tempo clock (`1024` samples per measured beat period).
+5. Listen to all 5 tracks simultaneously via PWM on `uo_out[0..3]` and `uo_out[7]`, or directly from the analog R-2R DACs on `ua[4]` and `ua[5]`.
 
 ## External hardware
 
-- 4× potentiometers (e.g. `1–5 kΩ` wired between `GND` and `3.3 V`, or buffered CV sources) on `ua[0..3]` for parameters `a..d`.
-- DIP switches or jumpers on `uio[5:0]` for `dac0_sel` / `dac1_sel`.
-- Op-amp buffer / audio amplifier / line-in for `ua[4..5]` analog outputs.
-- Speakers or [TinyTapeout Audio PMOD](https://github.com/MichaelBell/tt-audio-pmod) if you want to hear `uo[7]`.
+- 4× potentiometers or CV sources (`0–3.3 V`) connected to `ua[3:0]`.
+- High-impedance audio amplifier / scope probes on `ua[4]` and `ua[5]` (`~20.8 kΩ` output impedance).
+- Optional RC low-pass filter on `uo_out[0..3,7]` for PWM audio playback.

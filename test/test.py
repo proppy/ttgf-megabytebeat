@@ -1,11 +1,11 @@
 # Copyright 2025-2026 Google LLC.
 # SPDX-License-Identifier: Apache-2.0
-"""End-to-end cocotb verification for mixed-signal `tt_um_proppy_megabytebeat`.
+"""End-to-end cocotb verification for TTGF26c mixed-signal `tt_um_proppy_megabytebeat`.
 
 Uses `analog_model.R2RAdcModel` / `analog_model.R2RDacModel` and live `libngspice0`
 `AdcAmsBridge` / `DacAmsBridge` / `MixedSignalAmsBridge` (`cocotbext-ams`) to verify the
-full analog-in -> 4x4b ramp ADC -> 5-track bytebeat -> 5x PWM & 2x 8-bit R-2R DAC datapath
-bit-for-bit on both RTL and Gate-Level netlists.
+full analog-in -> 4x4b ramp ADC -> Bresenham BPM sync -> 5-track bytebeat -> 5x PWM & 2x
+8-bit R-2R DAC datapath bit-for-bit on both RTL and Gate-Level netlists.
 """
 
 import os
@@ -30,7 +30,7 @@ if str(SRC_DIR) not in sys.path:
 
 import analog  # noqa: E402
 
-CLOCK_PERIOD_NS = 488  # ~2.048 MHz (= 64 * 32 kHz core tick = 256 * 8 kHz PWM)
+CLOCK_PERIOD_NS = 476  # ~2.097 MHz (= 64 * 32.768 kHz)
 PWM_PERIOD = 256
 PWM_PINS = (0, 1, 2, 3, 7)
 ADC_IN_NETS = ("ua[0]", "ua[1]", "ua[2]", "ua[3]")
@@ -80,8 +80,8 @@ async def init_dut(dut, dac0_sel: int = 0, dac1_sel: int = 1):
     cocotb.start_soon(clock.start())
     dut.ena.value = 1
     dut.rst_n.value = 0
-    dut.ui_in.value = 0
-    dut.uio_in.value = ((dac1_sel & 0x7) << 3) | (dac0_sel & 0x7)
+    dut.ui_in.value = ((dac1_sel & 0x7) << 4) | ((dac0_sel & 0x7) << 1)
+    dut.uio_in.value = 0
     dut.ua_in.value = 0
     await ClockCycles(dut.clk, 4)
     return adc, dac
@@ -196,7 +196,7 @@ async def test_end_to_end_mixed_signal(dut):
             if frame == 4:
                 _drive_cv([10, 2, 10, 0])
                 dac0_sel, dac1_sel = 0, 4  # the42melody on DAC0, sierpinskiharmony on DAC1
-                dut.uio_in.value = ((dac1_sel & 0x7) << 3) | (dac0_sel & 0x7)
+                dut.ui_in.value = ((dac1_sel & 0x7) << 4) | ((dac0_sel & 0x7) << 1)
 
             pwm_ones = [0] * 8
             dac_mid = None
@@ -402,6 +402,7 @@ async def test_adc_ams_pvt(
 async def test_bpm_tap_tempo_lock(dut):
     """Verify ui_in[0] BPM pulse stretching, glitch rejection, and 120 -> 480 BPM lock on DACs."""
     dac0_sel, dac1_sel = 1, 2  # fractaltrees & untitleddroid
+    sel_bits = ((dac1_sel & 0x7) << 4) | ((dac0_sel & 0x7) << 1)
     adc, dac = await init_dut(dut, dac0_sel=dac0_sel, dac1_sel=dac1_sel)
     adc.set_codes([5, 1, 3, 0])
     adc.start()
@@ -430,9 +431,9 @@ async def test_bpm_tap_tempo_lock(dut):
         for tick in range(total_ticks):
             pulse = tick in pulse_ticks
             if pulse:
-                dut.ui_in.value = 1
+                dut.ui_in.value = sel_bits | 1
                 await ClockCycles(dut.clk, 4)
-                dut.ui_in.value = 0
+                dut.ui_in.value = sel_bits
                 await ClockCycles(dut.clk, 28)
             else:
                 await ClockCycles(dut.clk, 32)

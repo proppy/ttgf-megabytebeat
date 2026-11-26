@@ -1,15 +1,18 @@
-# Tiny Tapeout project information
+# Tiny Tapeout project information (TTGF26c 2x2 mixed-signal analog slot)
 project:
   title:        "megabytebeat"
   author:       "proppy"
   discord:      "proppy"
   description:  "Mixed-signal bytebeat synth: 4x 4-bit ramp ADCs, Bresenham BPM sync, 5-track XLS core, 2x 8-bit poly R-2R DACs, and 5x PWM."
   language:     "xls"
-  clock_hz:     2048000  # 8000 * 256
-  tiles: "2x2"
-  analog_pins: 6
-  uses_vapwr: false
-  top_module:  "tt_um_proppy_megabytebeat"
+  clock_hz:     2097152  # 2.097152 MHz (= 64 * 32.768 kHz core tick = 256 * 8.192 kHz PWM)
+
+  # Analog tile size (valid values for TTGF26c analog projects: 1x2, 2x2, 3x2, 4x2)
+  tiles:        "2x2"
+  analog_pins:  6
+  uses_vapwr:   false
+
+  top_module:   "tt_um_proppy_megabytebeat"
   source_files:
     - "tt_um_proppy_megabytebeat.v"
     - "pwm_audio.v"
@@ -20,35 +23,35 @@ project:
 pinout:
   # Inputs
   ui[0]: "bpm_in (external BPM / tap-tempo sync pulse)"
-  ui[1]: ""
-  ui[2]: ""
-  ui[3]: ""
-  ui[4]: ""
-  ui[5]: ""
-  ui[6]: ""
+  ui[1]: "dac0_sel[0] (DAC0 track select bit 0)"
+  ui[2]: "dac0_sel[1] (DAC0 track select bit 1)"
+  ui[3]: "dac0_sel[2] (DAC0 track select bit 2)"
+  ui[4]: "dac1_sel[0] (DAC1 track select bit 0)"
+  ui[5]: "dac1_sel[1] (DAC1 track select bit 1)"
+  ui[6]: "dac1_sel[2] (DAC1 track select bit 2)"
   ui[7]: ""
 
   # Outputs
-  uo[0]: "track #0 PWM output"
-  uo[1]: "track #1 PWM output"
-  uo[2]: "track #2 PWM output"
-  uo[3]: "track #3 PWM output"
-  uo[4]: "N/A"
-  uo[5]: "N/A"
-  uo[6]: "N/A"
-  uo[7]: "track #7 PWM output"
+  uo[0]: "the42melody PWM audio"
+  uo[1]: "fractaltrees PWM audio"
+  uo[2]: "untitleddroid PWM audio"
+  uo[3]: "atunetoshare PWM audio"
+  uo[4]: ""
+  uo[5]: ""
+  uo[6]: ""
+  uo[7]: "sierpinskiharmony PWM audio"
 
-  # Bidirectional pins (inputs; uio_oe = 0x00)
-  uio[0]: "dac0_sel[0] (DAC0 track select bit 0)"
-  uio[1]: "dac0_sel[1] (DAC0 track select bit 1)"
-  uio[2]: "dac0_sel[2] (DAC0 track select bit 2)"
-  uio[3]: "dac1_sel[0] (DAC1 track select bit 0)"
-  uio[4]: "dac1_sel[1] (DAC1 track select bit 1)"
-  uio[5]: "dac1_sel[2] (DAC1 track select bit 2)"
+  # Bidirectional pins (unused; uio_oe = 0x00)
+  uio[0]: ""
+  uio[1]: ""
+  uio[2]: ""
+  uio[3]: ""
+  uio[4]: ""
+  uio[5]: ""
   uio[6]: ""
   uio[7]: ""
 
-  # Analog pins
+  # Analog pins (ua[5:0] used; ua[7:6] unconnected)
   ua[0]: "adc_in[0] (param a analog CV, 0-3.3 V)"
   ua[1]: "adc_in[1] (param b analog CV, 0-3.3 V)"
   ua[2]: "adc_in[2] (param c analog CV, 0-3.3 V)"

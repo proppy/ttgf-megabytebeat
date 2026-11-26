@@ -12,7 +12,6 @@ dependencies = [
     "networkx>=3.0",
     "pyosys==0.71.post40",
     "pytest>=8.4.0",
-    "xls-python==0.1.9934",
 ]
 
 [tool.uv]

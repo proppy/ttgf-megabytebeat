@@ -9,8 +9,12 @@ module megabytebeat_chip_core #(
     input  wire              clk,
     input  wire              rst_n,
     input  wire              bpm_in,
-    input  wire [3:0]        adc_in,
-    output wire [TRACKS-1:0] dac_out
+    /* verilator lint_off UNUSEDSIGNAL */
+    /* verilator lint_off UNDRIVEN */
+    inout  wire [3:0]        adc_in,
+    inout  wire [TRACKS-1:0] dac_out
+    /* verilator lint_on UNDRIVEN */
+    /* verilator lint_on UNUSEDSIGNAL */
 );
     wire       reset = ~rst_n;
     wire [4:0] dac_bus;

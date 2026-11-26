@@ -75,20 +75,20 @@ module cosim_digital_core (
 
     reg [15:0] held_params = 16'h0a2a;
     reg        tick_r = 1'b0;
-    reg [7:0]  r_dac_0 = 8'h80;
-    reg [7:0]  r_dac_1 = 8'h80;
-    reg [7:0]  r_dac_2 = 8'h80;
-    reg [7:0]  r_dac_3 = 8'h80;
-    reg [7:0]  r_dac_4 = 8'h80;
+    reg [7:0]  r_dac_0 = 8'h00;
+    reg [7:0]  r_dac_1 = 8'h00;
+    reg [7:0]  r_dac_2 = 8'h00;
+    reg [7:0]  r_dac_3 = 8'h00;
+    reg [7:0]  r_dac_4 = 8'h00;
     always @(posedge clk) begin
         if (reset) begin
             held_params <= 16'h0a2a;
             tick_r      <= 1'b0;
-            r_dac_0     <= 8'h80;
-            r_dac_1     <= 8'h80;
-            r_dac_2     <= 8'h80;
-            r_dac_3     <= 8'h80;
-            r_dac_4     <= 8'h80;
+            r_dac_0     <= 8'h00;
+            r_dac_1     <= 8'h00;
+            r_dac_2     <= 8'h00;
+            r_dac_3     <= 8'h00;
+            r_dac_4     <= 8'h00;
         end else begin
             if (adc_params_vld) held_params <= adc_params;
             tick_r <= pcm_vld;
@@ -107,9 +107,9 @@ module cosim_digital_core (
     assign dbg_c           = held_params[11:8];
     assign dbg_d           = held_params[15:12];
     assign dbg_sample_tick = tick_r;
-    assign dac_d_0         = r_dac_0;
-    assign dac_d_1         = r_dac_1;
-    assign dac_d_2         = r_dac_2;
-    assign dac_d_3         = r_dac_3;
-    assign dac_d_4         = r_dac_4;
+    assign dac_d_0         = reset ? 8'h00 : r_dac_0;
+    assign dac_d_1         = reset ? 8'h00 : r_dac_1;
+    assign dac_d_2         = reset ? 8'h00 : r_dac_2;
+    assign dac_d_3         = reset ? 8'h00 : r_dac_3;
+    assign dac_d_4         = reset ? 8'h00 : r_dac_4;
 endmodule
