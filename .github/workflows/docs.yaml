@@ -28,7 +28,7 @@ jobs:
           clock-period-ps: 488281
           delay-model: gf180mcu_3v3
           area-model: gf180mcu_3v3
-          codegen-extra-args: --ffi_fallback_delay_ps=500 --generator=pipeline --pipeline_stages=1 --flop_inputs=false --flop_outputs=false --reset_active_low=false --reset_asynchronous=false --reset_data_path=true
+          ffi-fallback-delay-ps: 500
           artifact-name: xls-generated-megabytebeat
 
 
