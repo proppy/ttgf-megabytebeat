@@ -81,9 +81,16 @@ class AdcCornerResult:
         return (1 << BITS) - 1
 
     @property
+    def trips_in_range(self) -> bool:
+        if self.corner not in ("typical", "ss", "ff"):
+            return True
+        return bool(self.trips) and 0.0 < self.trips[0] < self.trips[-1] < self.vdd
+
+    @property
     def ok(self) -> bool:
         return (
             len(self.trips) == self.expected_steps
+            and self.trips_in_range
             and self.linearity.monotonic
             and self.linearity.max_dnl < self.max_dnl_limit
             and self.linearity.max_inl < self.max_inl_limit
@@ -98,10 +105,24 @@ class AdcChannelParasitics:
     vsum_rc: tuple[float, float] = (0.0, 0.0)
     term_rc: tuple[float, float] = (0.0, 0.0)
     bit_rc: tuple[tuple[float, float], ...] = ()
+    in_net: str | None = None
 
     @property
     def drv_res_ohms(self) -> list[float]:
         return [self.term_rc[0], *(r for r, _ in self.bit_rc)]
+
+
+@dataclass(frozen=True)
+class AdcSpefCheckResult:
+    """Structured result of post-PnR ADC SPEF parasitics verification."""
+
+    spef_path: Path
+    channels: dict[int, AdcChannelParasitics]
+    violations: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return not self.violations
 
 
 def build_adc(
@@ -140,10 +161,16 @@ def check_adc_parasitics(
     max_drv_r_ohm: float = 200.0,
     max_drv_c_pf: float = 5.0,
     in_nets: tuple[str, ...] | None = None,
-) -> dict[int, AdcChannelParasitics]:
+) -> AdcSpefCheckResult:
     """Verify post-PnR `ua[0..3]`/`adc_in`, `vsum`, and `clkinv_12` `in_drv`/`term_drv` SPEF R/C."""
+    violations: list[str] = []
     if in_nets is not None:
-        assert len(in_nets) == channels, f"in_nets length {len(in_nets)} != channels {channels}"
+        if len(in_nets) != channels:
+            return AdcSpefCheckResult(
+                spef_path=spef_path,
+                channels={},
+                violations=(f"in_nets length {len(in_nets)} != channels {channels}",),
+            )
         candidate_in_nets = set(in_nets)
         prefixes_to_check: tuple[str, ...] = ()
     else:
@@ -169,7 +196,9 @@ def check_adc_parasitics(
         )
         resolved_in_nets = [f"{resolved_prefix}[{ch}]" for ch in range(channels)]
     missing_in = [name for name in resolved_in_nets if name not in parsed]
-    assert not missing_in, f"{spef_path}: missing analog ADC input net(s) in SPEF: {missing_in}"
+    if missing_in:
+        violations.append(f"{spef_path}: missing analog ADC input net(s) in SPEF: {missing_in}")
+        return AdcSpefCheckResult(spef_path=spef_path, channels={}, violations=tuple(violations))
 
     by_prefix: dict[str, dict[str, tuple[float, float]]] = {}
     for net, rc in parsed.items():
@@ -186,68 +215,88 @@ def check_adc_parasitics(
         ),
         key=dac._natural_key,
     )
-    assert len(adc_prefixes) == channels, (
-        f"{spef_path}: expected {channels} {bits}-bit ADC driver instances in SPEF, "
-        f"found {len(adc_prefixes)}: {adc_prefixes}"
-    )
+    if len(adc_prefixes) != channels:
+        violations.append(
+            f"{spef_path}: expected {channels} {bits}-bit ADC driver instances in SPEF, "
+            f"found {len(adc_prefixes)}: {adc_prefixes}"
+        )
+        return AdcSpefCheckResult(spef_path=spef_path, channels={}, violations=tuple(violations))
 
     by_ch: dict[int, AdcChannelParasitics] = {}
     for ch, (prefix, in_name) in enumerate(zip(adc_prefixes, resolved_in_nets, strict=True)):
         in_r, in_c = parsed[in_name]
-        assert in_r < max_in_r_ohm, (
-            f"{spef_path}: {in_name} routing R={in_r:.2f} Ohm >= {max_in_r_ohm:.1f} Ohm"
-        )
-        assert in_c < max_in_c_pf, (
-            f"{spef_path}: {in_name} routing C={in_c:.4f} pF >= {max_in_c_pf:.2f} pF"
-        )
+        if in_r >= max_in_r_ohm:
+            violations.append(
+                f"{spef_path}: {in_name} routing R={in_r:.2f} Ohm >= {max_in_r_ohm:.1f} Ohm"
+            )
+        if in_c >= max_in_c_pf:
+            violations.append(
+                f"{spef_path}: {in_name} routing C={in_c:.4f} pF >= {max_in_c_pf:.2f} pF"
+            )
         pins_map = by_prefix[prefix]
-        assert "term_drv" in pins_map, f"{spef_path}: missing {prefix}.term_drv in SPEF"
-        assert "vsum" in pins_map, f"{spef_path}: missing {prefix}.vsum in SPEF"
+        if "term_drv" not in pins_map:
+            violations.append(f"{spef_path}: missing {prefix}.term_drv in SPEF")
+            continue
+        if "vsum" not in pins_map:
+            violations.append(f"{spef_path}: missing {prefix}.vsum in SPEF")
+            continue
         term_rc = pins_map["term_drv"]
         vsum_rc = pins_map["vsum"]
-        assert vsum_rc[0] < max_vsum_r_ohm, (
-            f"{spef_path}: adc ch{ch} vsum R={vsum_rc[0]:.2f} Ohm >= {max_vsum_r_ohm:.1f} Ohm"
-        )
-        assert vsum_rc[1] < max_vsum_c_pf, (
-            f"{spef_path}: adc ch{ch} vsum C={vsum_rc[1]:.4f} pF >= {max_vsum_c_pf:.2f} pF"
-        )
+        if vsum_rc[0] >= max_vsum_r_ohm:
+            violations.append(
+                f"{spef_path}: adc ch{ch} vsum R={vsum_rc[0]:.2f} Ohm >= {max_vsum_r_ohm:.1f} Ohm"
+            )
+        if vsum_rc[1] >= max_vsum_c_pf:
+            violations.append(
+                f"{spef_path}: adc ch{ch} vsum C={vsum_rc[1]:.4f} pF >= {max_vsum_c_pf:.2f} pF"
+            )
         bit_rc_list: list[tuple[float, float]] = []
+        missing_bits = False
         for b in range(bits):
             key = f"in_drv[{b}]"
-            assert key in pins_map, f"{spef_path}: missing {prefix}.{key} in SPEF"
-            bit_rc_list.append(pins_map[key])
+            if key not in pins_map:
+                violations.append(f"{spef_path}: missing {prefix}.{key} in SPEF")
+                missing_bits = True
+            else:
+                bit_rc_list.append(pins_map[key])
+        if missing_bits:
+            continue
         for pin_name, (dr, dc) in [("term_drv", term_rc)] + [
             (f"in_drv[{b}]", bit_rc_list[b]) for b in range(bits)
         ]:
-            assert dr < max_drv_r_ohm, (
-                f"{spef_path}: adc ch{ch} {pin_name} R={dr:.2f} Ohm >= {max_drv_r_ohm:.1f} Ohm"
-            )
-            assert dc < max_drv_c_pf, (
-                f"{spef_path}: adc ch{ch} {pin_name} C={dc:.4f} pF >= {max_drv_c_pf:.2f} pF"
-            )
+            if dr >= max_drv_r_ohm:
+                violations.append(
+                    f"{spef_path}: adc ch{ch} {pin_name} R={dr:.2f} Ohm >= {max_drv_r_ohm:.1f} Ohm"
+                )
+            if dc >= max_drv_c_pf:
+                violations.append(
+                    f"{spef_path}: adc ch{ch} {pin_name} C={dc:.4f} pF >= {max_drv_c_pf:.2f} pF"
+                )
         by_ch[ch] = AdcChannelParasitics(
             in_rc=(in_r, in_c),
             vsum_rc=vsum_rc,
             term_rc=term_rc,
             bit_rc=tuple(bit_rc_list),
+            in_net=in_name,
         )
-    return by_ch
+    return AdcSpefCheckResult(spef_path=spef_path, channels=by_ch, violations=tuple(violations))
 
 
 def format_parasitics_summary(parasitics: dict[int, AdcChannelParasitics]) -> str:
     """Format a compact one-line summary of per-channel ADC SPEF parasitics."""
     parts: list[str] = []
     for ch, p in sorted(parasitics.items()):
+        label = p.in_net or f"ua[{ch}]"
         in_r, in_c = p.in_rc
         vs_r, vs_c = p.vsum_rc
         if p.bit_rc:
             rs = p.drv_res_ohms
             parts.append(
-                f"ua[{ch}]={in_r:.1f}Ohm/{in_c:.3f}pF "
+                f"{label}={in_r:.1f}Ohm/{in_c:.3f}pF "
                 f"(vsum={vs_r:.1f}Ohm/{vs_c:.3f}pF, drv={min(rs):.1f}..{max(rs):.1f}Ohm)"
             )
         else:
-            parts.append(f"ua[{ch}]={in_r:.1f}Ohm/{in_c:.3f}pF")
+            parts.append(f"{label}={in_r:.1f}Ohm/{in_c:.3f}pF")
     return ", ".join(parts)
 
 
@@ -453,7 +502,8 @@ def measure_trip_points(
         sim.command(f"dc vadc 0.0 {vdd:.3f} 0.015")
 
         vin_vec = sim._lib.ngGet_Vec_Info(b"adc_in")
-        assert vin_vec, "ngspice ADC trip sweep did not produce adc_in vector"
+        if not vin_vec:
+            raise RuntimeError("ngspice ADC trip sweep did not produce adc_in vector")
         vin_vi = vin_vec.contents
         n_pts = vin_vi.v_length
         vin = [float(vin_vi.v_realdata[i]) for i in range(n_pts)]
@@ -462,9 +512,13 @@ def measure_trip_points(
         trips: list[float] = []
         for k in range(n_steps):
             cvec = sim._lib.ngGet_Vec_Info(f"cmp_{k}".encode())
-            assert cvec, f"ngspice ADC trip sweep did not produce cmp_{k} vector"
+            if not cvec:
+                raise RuntimeError(f"ngspice ADC trip sweep did not produce cmp_{k} vector")
             cvi = cvec.contents
-            assert cvi.v_length == n_pts
+            if cvi.v_length != n_pts:
+                raise RuntimeError(
+                    f"ngspice ADC trip sweep vector length mismatch: cmp_{k}={cvi.v_length} != {n_pts}"
+                )
             vcmp = [float(cvi.v_realdata[i]) for i in range(n_pts)]
             vtrip: float | None = None
             for i in range(n_pts - 1):
@@ -472,10 +526,11 @@ def measure_trip_points(
                     frac = (vmid - vcmp[i]) / (vcmp[i + 1] - vcmp[i])
                     vtrip = vin[i] + frac * (vin[i + 1] - vin[i])
                     break
-            assert vtrip is not None, (
-                f"ADC step {k} comparator never crossed {vmid:.2f} V "
-                f"(range {min(vcmp):.3f}..{max(vcmp):.3f} V)"
-            )
+            if vtrip is None:
+                raise RuntimeError(
+                    f"ADC step {k} comparator never crossed {vmid:.2f} V "
+                    f"(range {min(vcmp):.3f}..{max(vcmp):.3f} V)"
+                )
             trips.append(vtrip)
         return trips
 
@@ -609,8 +664,9 @@ def main() -> None:
         )
         assert spef_files, f"No SPEF files found under {args.check_spef}"
         for spef in spef_files:
-            by_ch = check_adc_parasitics(spef, channels=args.channels)
-            print(f"  [ADC SPEF check | {spef.name}] OK: {format_parasitics_summary(by_ch)}")
+            res = check_adc_parasitics(spef, channels=args.channels)
+            assert res.ok, "; ".join(res.violations)
+            print(f"  [ADC SPEF check | {spef.name}] OK: {format_parasitics_summary(res.channels)}")
         return
 
     tool_checks = tools.check_native_tools(("klayout", "magic"))

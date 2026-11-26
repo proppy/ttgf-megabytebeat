@@ -196,6 +196,11 @@ class DacAmsBridge:
         require = mode in ("1", "true", "yes", "on", "require")
 
         spice_path = dac.find_spice(r2r_spice)
+        if spice_path is None and r2r_spice is None and not os.environ.get("R2R_SPICE"):
+            if analog.kf is not None:
+                s, cell, pins = dac.build_dac()
+                _, _, _, spice_path = analog.emit_macro(s, cell, pins, REPO_ROOT / "gen/dac")
+                dut._log.info("Generated passive DAC SPICE netlist -> %s", spice_path)
         if spice_path is None:
             msg = f"{dac.CELL_NAME}.spice not found (set R2R_SPICE or run src/dac.py)"
             if require:
@@ -215,9 +220,11 @@ class DacAmsBridge:
         ):
             found_spef = dac.find_spef(spef_path)
             if found_spef is not None:
-                route_rc = dac.check_dac_parasitics(
+                spef_res = dac.check_dac_parasitics(
                     found_spef, channels=len(insts), out_nets=out_nets
                 )
+                assert spef_res.ok, "; ".join(spef_res.violations)
+                route_rc = spef_res.channels
                 dut._log.info(
                     "Loaded post-PnR DAC SPEF parasitics (%s, ladder=%s): %s",
                     found_spef.name,
@@ -520,6 +527,11 @@ class AdcAmsBridge:
         require = mode in ("1", "true", "yes", "on", "require")
 
         spice_path = adc.find_spice(r2r_spice)
+        if spice_path is None and r2r_spice is None and not os.environ.get("ADC_R2R_SPICE"):
+            if analog.kf is not None:
+                s, cell, pins = adc.build_adc()
+                _, _, _, spice_path = analog.emit_macro(s, cell, pins, REPO_ROOT / "gen/adc")
+                dut._log.info("Generated passive ADC SPICE netlist -> %s", spice_path)
         if spice_path is None:
             msg = f"{adc.CELL_NAME}.spice not found (set ADC_R2R_SPICE or run src/adc.py)"
             if require:
@@ -538,9 +550,11 @@ class AdcAmsBridge:
         ):
             found_spef = dac.find_spef(spef_path)
             if found_spef is not None:
-                route_rc = adc.check_adc_parasitics(
+                spef_res = adc.check_adc_parasitics(
                     found_spef, channels=len(insts), in_nets=in_nets
                 )
+                assert spef_res.ok, "; ".join(spef_res.violations)
+                route_rc = spef_res.channels
                 dut._log.info(
                     "Loaded post-PnR ADC SPEF parasitics (%s, ladder=%s): %s",
                     found_spef.name,
