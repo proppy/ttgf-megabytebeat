@@ -1,8 +1,8 @@
 diff --git a/chip/cocotb/chip_top_tb.py b/chip/cocotb/chip_top_tb.py
-index af7c0fe..c5a8063 100644
+index af7c0fe..416c547 100644
 --- a/chip/cocotb/chip_top_tb.py
 +++ b/chip/cocotb/chip_top_tb.py
-@@ -2,18 +2,22 @@
+@@ -2,18 +2,21 @@
  # SPDX-License-Identifier: Apache-2.0
  #
  # Full-chip cocotb testbench for slot 0p5x1 dual-VDD GNSS AFE + proppy/ttgf-megabytebeat.
@@ -26,11 +26,10 @@ index af7c0fe..c5a8063 100644
 -from cocotb.triggers import Timer, RisingEdge, FallingEdge, ClockCycles
 +from cocotb.handle import HierarchyArrayObject, HierarchyObject
 +from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge, Timer
-+from cocotb.types import LogicArray
  from cocotb_tools.runner import get_runner
  
  sim = os.getenv("SIM", "icarus")
-@@ -28,7 +32,7 @@ slot = os.getenv("SLOT", "0p5x1")
+@@ -28,7 +31,7 @@ slot = os.getenv("SLOT", "0p5x1")
  hdl_toplevel = "chip_top"
  
  
@@ -39,7 +38,7 @@ index af7c0fe..c5a8063 100644
      """Exact golden formulas from proppy/ttgf-megabytebeat src/bytebeat.x."""
      t32 = t & 0xFFFFFFFF
      ab = ((b & 0xF) << 4) | (a & 0xF)
-@@ -58,10 +62,76 @@ def bytebeat_golden(t: int, a: int, b: int, c: int, d: int):
+@@ -58,10 +61,77 @@ def bytebeat_golden(t: int, a: int, b: int, c: int, d: int):
      return [s0, s1, s2, s3, s7]
  
  
@@ -86,13 +85,14 @@ index af7c0fe..c5a8063 100644
 +
 +
 +def _drive_adc_pads(dut, adc_ladders: list[dict], targets: list[int]) -> None:
-+    """Drive comparator output on external bb_ua_PAD[3:0] while leaving bb_ua_PAD[5:4] Hi-Z."""
-+    bits = []
-+    for ch in range(3, -1, -1):
++    """Drive comparator output on external bb_ua_PAD[3:0] via sim_bb_ua_adc_drv without touching DAC pads."""
++    mask = 0
++    for ch in range(4):
 +        in_val = int(adc_ladders[ch]["in"].value)
 +        step = (~in_val) & 0xF
-+        bits.append("1" if targets[ch] > step else "0")
-+    dut.bb_ua_PAD.value = LogicArray("ZZ" + "".join(bits))
++        if targets[ch] > step:
++            mask |= 1 << ch
++    dut.sim_bb_ua_adc_drv.value = mask
 +
 +
 +def _read_dac_pad_msbs(dut) -> int:
@@ -124,7 +124,7 @@ index af7c0fe..c5a8063 100644
      dut.bb_ena_PAD.value = 0
 -    dut.bb_ui_PAD.value = 0
      dut.bb_uio_PAD.value = 0
-+    dut.bb_ua_PAD.value = LogicArray("ZZ0000")
++    dut.sim_bb_ua_adc_drv.value = 0
  
      await Timer(500, unit="ns")
      dut.rst_n_PAD.value = 1
@@ -504,7 +504,7 @@ index fbddeef..d608c5b 100644
      );
  `endif
 diff --git a/chip/src/chip_top.sv b/chip/src/chip_top.sv
-index 4360994..8818878 100644
+index 4360994..a2dfff4 100644
 --- a/chip/src/chip_top.sv
 +++ b/chip/src/chip_top.sv
 @@ -39,7 +39,12 @@ module chip_top #(
@@ -785,7 +785,19 @@ index 4360994..8818878 100644
      endgenerate
  `endif
  
-@@ -491,6 +511,12 @@ module chip_top #(
+@@ -486,11 +506,24 @@ module chip_top #(
+         .RF     (rf_PAD)
+     );
+ 
++`ifdef SIM
++    // Separate simulation-only driver for ADC pads bb_ua_PAD[3:0] so Icarus VPI
++    // writes never clobber DAC outputs on bb_ua_PAD[5:4].
++    reg [3:0] sim_bb_ua_adc_drv = 4'bzzzz;
++    assign bb_ua_PAD[3:0] = sim_bb_ua_adc_drv;
++`endif
++
+     // Core design
+     chip_core #(
          .NUM_INPUT_PADS  (NUM_INPUT_PADS),
          .NUM_BIDIR_PADS  (NUM_BIDIR_PADS),
          .NUM_ANALOG_PADS (NUM_ANALOG_PADS)
@@ -798,7 +810,7 @@ index 4360994..8818878 100644
      ) i_chip_core (
          `ifdef USE_POWER_PINS
          .VDD        (VDD),
-@@ -502,10 +528,10 @@ module chip_top #(
+@@ -502,10 +535,10 @@ module chip_top #(
          .VDD_BB     (VDD_BB),
          `endif
          `endif
@@ -811,7 +823,7 @@ index 4360994..8818878 100644
          .input_in   (input_PAD2CORE),
          .input_pu   (input_CORE2PAD_PU),
          .input_pd   (input_CORE2PAD_PD),
-@@ -520,7 +546,7 @@ module chip_top #(
+@@ -520,7 +553,7 @@ module chip_top #(
          .bidir_pd    (bidir_CORE2PAD_PD),
          .bidir_pdrv0 (bidir_CORE2PAD_PDRV0),
          .bidir_pdrv1 (bidir_CORE2PAD_PDRV1),
@@ -820,7 +832,7 @@ index 4360994..8818878 100644
          .analog     (analog_PAD),
          .rfin       (rf_PAD)
  `ifdef HAS_MEGABYTEBEAT
-@@ -528,23 +554,22 @@ module chip_top #(
+@@ -528,23 +561,22 @@ module chip_top #(
          .bb_clk       (bb_clk_PAD2CORE),
          .bb_rst_n     (bb_rst_n_PAD2CORE),
          .bb_ena       (bb_ena_PAD2CORE),
