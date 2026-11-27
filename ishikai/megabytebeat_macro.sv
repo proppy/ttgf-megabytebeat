@@ -1,23 +1,22 @@
 // SPDX-FileCopyrightText: © 2026 GNSS AFE + megabytebeat Authors
 // SPDX-License-Identifier: Apache-2.0
 //
-// Hardened mixed-signal macro wrapper around proppy/ttgf-megabytebeat
-// (tt_um_proppy_megabytebeat + megabytebeat.sv + pwm_audio.v + 5x sc_r2r_dac_8bit /
-// r2r_ladder_8bit) in a dedicated VDD_BB power domain (shared VSS).
+// Hardened mixed-signal macro wrapper around XLS `megabytebeat`
+// (megabytebeat.v + 5x sc_r2r_dac_8bit / r2r_ladder_8bit) in a dedicated
+// VDD_BB power domain (shared VSS), clocked at 32.768 kHz (/4 = 8.192 kHz DAC rate).
 //
 // Enable / quiet-by-default behavior:
 //   * The chip_top pad for `ena` (bb_ena_pad) has internal pull-down (PD=1 driven by
 //     VDD_BB-domain `vdd_bb_hi_s`), so when unconnected `ena` defaults to 0.
 //   * While `ena == 0` and `rst_n == 1`, the integrated clock gate shuts off `gclk`
-//     completely (zero dynamic switching during GNSS operation), all PWM outputs are
-//     clamped to 0, and `tt_um_proppy_megabytebeat` combinationally clamps all 5 R-2R
-//     DAC ladders to 0x00 (0 V, < 2 nA/ch standby leakage).
+//     completely (zero dynamic switching during GNSS operation) and `analog_en == 0`
+//     combinationally clamps all 5 R-2R DAC ladders to 0x00 (0 V, < 2 nA/ch standby leakage).
 //   * On a 1 -> 0 transition of `ena`, `ena_q` keeps `gclk` alive for 1 cycle so the
-//     synchronous resets inside XLS `megabytebeat` and `pwm_audio` clear all FFs cleanly
+//     synchronous resets inside `clk_div` and XLS `megabytebeat` clear all FFs cleanly
 //     before the clock tree stops.
 //   * Dedicated VDD_BB-domain constant outputs (vdd_bb_hi_s, vss_lo_*) drive all static
-//     control pins (PD, PU, OE, IE, CS, SL, PDRV0, PDRV1) of the megabytebeat I/O pads,
-//     guaranteeing ZERO GNSS-VDD cells on any megabytebeat net.
+//     control pins (PD, PU) of the megabytebeat I/O pads, guaranteeing ZERO GNSS-VDD cells
+//     on any megabytebeat net.
 
 `default_nettype none
 
@@ -31,7 +30,6 @@ module megabytebeat_macro (
     input  wire       ena,
     input  wire [7:0] ui_in,
     input  wire [7:0] uio_in,
-    output wire [2:0] uo_pwm,
     inout  wire [4:0] ua,
     output wire       vdd_bb_hi_s,
     output wire       vss_lo_s,
@@ -89,33 +87,44 @@ module megabytebeat_macro (
 `endif
 
     wire eff_rst_n = rst_n & ena;
+    wire rst       = !eff_rst_n;
+    wire analog_en = eff_rst_n;
 
-    wire [7:0] uo_raw;
-    wire [7:0] uio_out_unused;
-    wire [7:0] uio_oe_unused;
-    /* verilator lint_off UNDRIVEN */
-    /* verilator lint_off UNUSEDSIGNAL */
-    wire [2:0] ua_unused;
-    /* verilator lint_on UNUSEDSIGNAL */
-    /* verilator lint_on UNDRIVEN */
+    // 2-bit divider: 32.768 kHz / 4 = 8.192 kHz DAC audio sample rate (4 clocks per frame)
+    reg [1:0] clk_div;
+    wire      sample_rdy = (clk_div == 2'd3);
+    always @(posedge gclk) begin
+        if (!eff_rst_n)
+            clk_div <= 2'd0;
+        else
+            clk_div <= clk_div + 2'd1;
+    end
 
-    tt_um_proppy_megabytebeat u_tt (
-        .ui_in   (ui_in),
-        .uo_out  (uo_raw),
-        .uio_in  (uio_in),
-        .uio_out (uio_out_unused),
-        .uio_oe  (uio_oe_unused),
-        .ua      ({ua_unused, ua}),
-        .ena     (ena),
-        .clk     (gclk),
-        .rst_n   (eff_rst_n)
+    wire [15:0] packed_params = {uio_in, ui_in};  // {d, c, b, a}
+    wire [39:0] pcm_bus;
+    wire        pcm_vld;
+    wire        dac_vld;
+    wire        en_rdy;
+    wire        params_rdy;
+
+    megabytebeat u_megabytebeat (
+        .clk          (gclk),
+        .reset        (rst),
+        ._en_r        (analog_en),
+        ._en_r_vld    (1'b1),
+        ._en_r_rdy    (en_rdy),
+        ._params_r    (packed_params),
+        ._params_r_vld(1'b1),
+        ._params_r_rdy(params_rdy),
+        ._pcm_s       (pcm_bus),
+        ._pcm_s_vld   (pcm_vld),
+        ._pcm_s_rdy   (sample_rdy),
+        ._dac_s       (ua),
+        ._dac_s_vld   (dac_vld),
+        ._dac_s_rdy   (sample_rdy)
     );
 
-    // Map tracks 0..2 to South PWM pads (tracks 0..3 & 7 are all output on analog DACs ua[4:0])
-    // Clamped to 0 whenever ena == 0
-    assign uo_pwm = ena ? uo_raw[2:0] : 3'b000;
-
-    wire _unused = &{uo_raw[7:3], uio_out_unused, uio_oe_unused, 1'b0};
+    wire _unused = &{pcm_bus, pcm_vld, dac_vld, en_rdy, params_rdy, 1'b0};
 
 endmodule
 

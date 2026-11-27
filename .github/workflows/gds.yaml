@@ -70,6 +70,11 @@ jobs:
           curl -fsSL \
             https://raw.githubusercontent.com/TinyTapeout/tt-support-tools/main/tech/gf180mcuD/def/analog/tt_analog_2x2.def \
             -o gen/tt_analog_2x2.def
+          uv run python src/chip.py \
+            --target tinytapeout \
+            --verilog src/megabytebeat.sv \
+            --def-template gen/tt_analog_2x2.def \
+            --out gen/tt_config.json
           uv run librelane \
             -m "$PDK_ROOT" \
             -m "$PWD" \
@@ -80,7 +85,7 @@ jobs:
             --manual-pdk \
             --scl gf180mcu_fd_sc_mcu7t5v0 \
             --save-views-to gen/final \
-            src/config.json
+            gen/tt_config.json
           uv run python src/dac.py --check-spef gen/final/spef
 
       - name: Upload passive DAC SPICE, Magic PEX & post-PnR SPEF for GL AMS co-sim

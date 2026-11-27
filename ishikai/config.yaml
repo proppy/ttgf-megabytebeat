@@ -5,9 +5,7 @@ meta:
 DESIGN_NAME: megabytebeat_macro
 VERILOG_FILES:
   - dir::../src/megabytebeat.v
-  - dir::../src/pwm_audio.v
   - dir::../src/sc_r2r_dac_8bit.v
-  - dir::../src/tt_um_proppy_megabytebeat.v
   - dir::megabytebeat_macro.sv
 
 PNR_SDC_FILE: dir::megabytebeat_macro.sdc
@@ -19,9 +17,9 @@ VDD_NETS:
 GND_NETS:
   - VSS
 
-# Clock: 2.048 MHz (same as upstream ttgf-megabytebeat)
+# Clock: 32.768 kHz (/4 = 8.192 kHz DAC audio sample rate)
 CLOCK_PORT: clk
-CLOCK_PERIOD: 488
+CLOCK_PERIOD: 30517.5
 
 # Floorplan: 960 x 960 um (VDD_BB mixed-signal macro with 5x passive 8-bit R-2R DACs)
 FP_SIZING: absolute
@@ -45,74 +43,6 @@ MACROS:
         - dir::../gen/dac/r2r_ladder_8bit.lib
     spice:
       - dir::../gen/dac/r2r_ladder_8bit.spice
-    instances:
-      u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.u_r2r:
-        location: [60.48, 650.72]
-        orientation: N
-      u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.u_r2r:
-        location: [60.48, 729.12]
-        orientation: N
-      u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.u_r2r:
-        location: [60.48, 807.52]
-        orientation: N
-      u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.u_r2r:
-        location: [820.96, 70.56]
-        orientation: N
-      u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.u_r2r:
-        location: [820.96, 148.96]
-        orientation: N
-
-# Pre-place clkbuf_20 DAC drivers directly above each R-2R ladder for low (< 30 Ohm) bit wire resistance
-MANUAL_GLOBAL_PLACEMENTS:
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[7].u_buf: {location: [60.48, 682.08], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.u_term: {location: [80.08, 682.08], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[6].u_buf: {location: [40.88, 686.00], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[5].u_buf: {location: [60.48, 686.00], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[4].u_buf: {location: [60.48, 689.92], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[3].u_buf: {location: [80.08, 689.92], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[2].u_buf: {location: [40.88, 693.84], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[1].u_buf: {location: [60.48, 693.84], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call_inst.gen_drv[0].u_buf: {location: [60.48, 697.76], orientation: N}
-
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[7].u_buf: {location: [60.48, 760.48], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.u_term: {location: [80.08, 760.48], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[6].u_buf: {location: [40.88, 764.40], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[5].u_buf: {location: [60.48, 764.40], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[4].u_buf: {location: [60.48, 768.32], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[3].u_buf: {location: [80.08, 768.32], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[2].u_buf: {location: [40.88, 772.24], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[1].u_buf: {location: [60.48, 772.24], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__1_inst.gen_drv[0].u_buf: {location: [60.48, 776.16], orientation: N}
-
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[7].u_buf: {location: [60.48, 838.88], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.u_term: {location: [80.08, 838.88], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[6].u_buf: {location: [40.88, 842.80], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[5].u_buf: {location: [60.48, 842.80], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[4].u_buf: {location: [60.48, 846.72], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[3].u_buf: {location: [80.08, 846.72], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[2].u_buf: {location: [40.88, 850.64], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[1].u_buf: {location: [60.48, 850.64], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__2_inst.gen_drv[0].u_buf: {location: [60.48, 854.56], orientation: N}
-
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[7].u_buf: {location: [820.96, 101.92], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.u_term: {location: [840.56, 101.92], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[6].u_buf: {location: [801.36, 105.84], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[5].u_buf: {location: [820.96, 105.84], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[4].u_buf: {location: [820.96, 109.76], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[3].u_buf: {location: [840.56, 109.76], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[2].u_buf: {location: [801.36, 113.68], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[1].u_buf: {location: [820.96, 113.68], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__3_inst.gen_drv[0].u_buf: {location: [820.96, 117.60], orientation: N}
-
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[7].u_buf: {location: [820.96, 180.32], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.u_term: {location: [840.56, 180.32], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[6].u_buf: {location: [801.36, 184.24], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[5].u_buf: {location: [820.96, 184.24], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[4].u_buf: {location: [820.96, 188.16], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[3].u_buf: {location: [840.56, 188.16], orientation: N}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[2].u_buf: {location: [801.36, 192.08], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[1].u_buf: {location: [820.96, 192.08], orientation: FS}
-  u_tt.u_megabytebeat.__dac__r2r_dac_8bit_map_r2r_dac_8bit_call__4_inst.gen_drv[0].u_buf: {location: [820.96, 196.00], orientation: N}
 
 # Reserve Metal5 for PDN + chip_top VDD_BB power straps
 RT_MAX_LAYER: Metal4
@@ -159,11 +89,24 @@ EXTRA_EXCLUDED_CELLS:
   - gf180mcu_fd_sc_mcu7t5v0__dlyd_4
 
 # Placement / routing tuning
+# Repair design slew/cap against slow corner with realistic OpenRCX wire cap (0.22 fF/um)
+# Units match GF180MCU Liberty: kOhm/um and pF/um (same as upstream chip/librelane/config.yaml)
+DEFAULT_CORNER: nom_ss_125C_4v50
+DESIGN_REPAIR_MAX_SLEW_PCT: 40
+GRT_DESIGN_REPAIR_MAX_SLEW_PCT: 20
+LAYERS_RC:
+  "*":
+    Metal2: {res: 0.000225636, cap: 0.00022}
+    Metal3: {res: 0.000225636, cap: 0.00022}
+    Metal4: {res: 0.000225636, cap: 0.00022}
+    Metal5: {res: 5.85545e-05, cap: 0.00022}
 PL_TARGET_DENSITY_PCT: 50
 GRT_ALLOW_CONGESTION: True
 PL_RESIZER_HOLD_SLACK_MARGIN: 0.2
 GRT_RESIZER_HOLD_SLACK_MARGIN: 0.1
-RUN_HEURISTIC_DIODE_INSERTION: True
+RUN_HEURISTIC_DIODE_INSERTION: False
+DRT_ANTENNA_REPAIR_ITERS: 10
+DRT_ANTENNA_REPAIR_MARGIN: 10
 
 # Signoff
 PRIMARY_GDSII_STREAMOUT_TOOL: klayout
