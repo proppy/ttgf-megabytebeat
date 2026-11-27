@@ -1,8 +1,9 @@
 # SPDX-FileCopyrightText: © 2026 GNSS AFE + megabytebeat Authors
 # SPDX-License-Identifier: Apache-2.0
 #
-# Timing constraints for ISHI-KAI 5.0 V VDD_BB `megabytebeat_macro` (32.768 kHz, /4 = 8.192 kHz, 5x 8-bit R-2R DAC).
-# Excludes passive analog inout ports `ua[4:0]` from digital delay/load/driving-cell checks.
+# Timing constraints for ISHI-KAI 5.0 V VDD_BB `megabytebeat_macro`
+# (32.768 kHz, 1:1 ADC tick = 2.048 kHz CV refresh, /4 = 8.192 kHz DAC audio, 4x ADC + 2x DAC).
+# Excludes passive analog inout ports `ua[5:0]` from digital delay/load/driving-cell checks.
 # At 30,517.5 ns (32.768 kHz), single-cycle timing closes with >29,000 ns slack.
 
 create_clock [get_ports clk] -name clk -period $::env(CLOCK_PERIOD)
@@ -20,8 +21,8 @@ if { [info exists ::env(MAX_CAPACITANCE_CONSTRAINT)] } {
 }
 
 set clocks [get_clocks clk]
-set dig_inputs [get_ports {ui_in[*] uio_in[*] ena rst_n}]
-set dig_outputs [get_ports {vdd_bb_hi_s vss_lo_s vss_lo_w vss_lo_e}]
+set dig_inputs [get_ports {uio_in[*] ena rst_n}]
+set dig_outputs [get_ports {vdd_bb_hi_s vss_lo_s vss_lo_e}]
 set ana_ports [get_ports {ua[*]}]
 
 set_input_delay $input_delay_value -clock $clocks $dig_inputs
@@ -44,7 +45,7 @@ set cap_load [expr $::env(OUTPUT_CAP_LOAD) / 1000.0]
 puts "\[INFO\] Setting digital output load to: $cap_load"
 set_load $cap_load $dig_outputs
 
-# Analog pins ua[4:0] (5x passive R-2R DAC outputs) are non-timed.
+# Analog pins ua[5:0] (4x passive ramp ADC sum_in + 2x passive R-2R DAC out) are non-timed.
 set_false_path -from $ana_ports
 set_false_path -to $ana_ports
 
