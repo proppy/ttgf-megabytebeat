@@ -41,7 +41,7 @@ jobs:
         uses: TinyTapeout/ciel-action@v1
         with:
           pdk_name: gf180mcuD
-          pdk_version: 792ef67037d74c8c51811eab3ce23cf793491296
+          pdk_version: 2fdf40d5736413bb321c31418462aefc17b919b8
           pdk_root: ${{ runner.temp }}/pdk
 
       - name: Setup GF180MCU PDK (analog DRC/LVS/PEX)
@@ -153,7 +153,7 @@ jobs:
         uses: TinyTapeout/ciel-action@v1
         with:
           pdk_name: gf180mcuD
-          pdk_version: 792ef67037d74c8c51811eab3ce23cf793491296
+          pdk_version: 2fdf40d5736413bb321c31418462aefc17b919b8
           pdk_root: ${{ runner.temp }}/pdk
 
       - name: Verify full-chip chip_top LibreLane PnR + Netgen LVS

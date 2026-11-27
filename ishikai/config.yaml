@@ -90,16 +90,16 @@ EXTRA_EXCLUDED_CELLS:
 
 # Placement / routing tuning
 # Repair design slew/cap against slow corner with realistic OpenRCX wire cap (0.22 fF/um)
-# Units match GF180MCU Liberty: kOhm/um and pF/um (same as upstream chip/librelane/config.yaml)
+# Units match GF180MCU Liberty: Ohm/um and pF/um (fixed in open-pdks#582 / PDK 2fdf40d5)
 DEFAULT_CORNER: nom_ss_125C_4v50
 DESIGN_REPAIR_MAX_SLEW_PCT: 40
 GRT_DESIGN_REPAIR_MAX_SLEW_PCT: 20
 LAYERS_RC:
   "*":
-    Metal2: {res: 0.000225636, cap: 0.00022}
-    Metal3: {res: 0.000225636, cap: 0.00022}
-    Metal4: {res: 0.000225636, cap: 0.00022}
-    Metal5: {res: 5.85545e-05, cap: 0.00022}
+    Metal2: {res: 0.225636, cap: 0.00022}
+    Metal3: {res: 0.225636, cap: 0.00022}
+    Metal4: {res: 0.225636, cap: 0.00022}
+    Metal5: {res: 0.0585545, cap: 0.00022}
 PL_TARGET_DENSITY_PCT: 50
 GRT_ALLOW_CONGESTION: True
 PL_RESIZER_HOLD_SLACK_MARGIN: 0.2
