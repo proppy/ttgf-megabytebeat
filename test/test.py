@@ -1,145 +1,61 @@
-# Copyright 2025 Google LLC.
+# Copyright 2025-2026 Google LLC.
 # SPDX-License-Identifier: Apache-2.0
+"""End-to-end cocotb verification for mixed-signal `tt_um_proppy_megabytebeat`.
 
-import array
-import difflib
-import filecmp
-import math
+Uses `analog_model.R2RAdcModel` / `analog_model.R2RDacModel` and live `libngspice0`
+`AdcAmsBridge` / `DacAmsBridge` / `MixedSignalAmsBridge` (`cocotbext-ams`) to verify the
+full analog-in -> 4x4b ramp ADC -> 5-track bytebeat -> 5x PWM & 2x 8-bit R-2R DAC datapath
+bit-for-bit on both RTL and Gate-Level netlists.
+"""
+
 import os
 from pathlib import Path
-import pprint
-import wave
+import sys
 
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, RisingEdge, Timer
 
-from analog_model import DacAmsBridge, R2RDacModel
+from analog_model import (
+    AdcAmsBridge,
+    DacAmsBridge,
+    MixedSignalAmsBridge,
+    R2RAdcModel,
+    R2RDacModel,
+)
 
+SRC_DIR = Path(__file__).resolve().parent.parent / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
-SAMPLE_RATE = 8000
+import analog  # noqa: E402
+
+CLOCK_PERIOD_NS = 488  # ~2.048 MHz (= 64 * 32 kHz core tick = 256 * 8 kHz PWM)
 PWM_PERIOD = 256
-FREQ = SAMPLE_RATE * PWM_PERIOD
-PERIOD_PS = 488280
+PWM_PINS = (0, 1, 2, 3, 7)
+ADC_IN_NETS = ("ua[0]", "ua[1]", "ua[2]", "ua[3]")
+DAC_OUT_NETS = ("ua[4]", "ua[5]")
 SIM_SUFFIX = "glsim" if os.environ.get("GATES") == "yes" else "sim"
 SIM_NAME = os.environ.get("SIM", "verilator")
 
 
-def the42melody(t: int, a: int, b: int, c: int, d: int) -> int:
+def eval_tracks_py(t: int, a: int, b: int, c: int, d: int) -> list[int]:
     ab = (b << 4) | a
     cd = (d << 4) | c
-    return (t * (ab & (t >> cd))) & 0xFF
-
-
-def fractaltrees(t: int, a: int, b: int, c: int, d: int) -> int:
-    ab = (b << 4) | a
     ab_nz = 1 if ab == 0 else ab
-    cd = (d << 4) | c
-    return (t | (t % ab_nz) | (t % (cd + 2))) & 0xFF
+    return [
+        (t * (ab & (t >> cd))) & 0xFF,
+        (t | (t % ab_nz) | (t % (cd + 2))) & 0xFF,
+        ((t >> c) if ((t >> a) & b) != 0 else (((~t & 0xFFFFFFFF) + 1) >> d)) & 0xFF,
+        ((t * ((t >> a) | (t >> b))) & cd) & 0xFF,
+        (((t * a) & (t >> b)) | ((t * c) & (t >> d))) & 0xFF,
+    ]
 
 
-def untitleddroid(t: int, a: int, b: int, c: int, d: int) -> int:
-    cond = (t >> a) & b
-    s = (t >> c) if cond != 0 else (((~t + 1) & 0xFFFFFFFF) >> d)
-    return s & 0xFF
+_ADC_TRIPS: dict[tuple[float, str, str, float | None, str, bool], list[float]] = {}
 
 
-def atunetoshare(t: int, a: int, b: int, c: int, d: int) -> int:
-    cd = (d << 4) | c
-    return (t * ((t >> a) | (t >> b)) & cd) & 0xFF
-
-
-def sierpinskiharmony(t: int, a: int, b: int, c: int, d: int) -> int:
-    return (((t * a) & (t >> b)) | ((t * c) & (t >> d))) & 0xFF
-
-
-def silence(t: int, a: int, b: int, c: int, d: int) -> int:
-    return 0
-
-
-FORMULAS = [
-    the42melody,
-    fractaltrees,
-    untitleddroid,
-    atunetoshare,
-    silence,
-    silence,
-    silence,
-    sierpinskiharmony,
-]
-
-
-def golden_sample(num_samples: int, a: int, b: int, c: int, d: int):
-    for t in range(num_samples):
-        yield [fn(t, a, b, c, d) for fn in FORMULAS]
-
-
-def golden_pwm(num_samples: int, a: int, b: int, c: int, d: int):
-    for s in golden_sample(num_samples, a, b, c, d):
-        # sum/or (concat) individual pwm bit signal into a bus
-        yield [
-            sum((count < s[ch]) << ch for ch in range(len(FORMULAS))) for count in range(PWM_PERIOD)
-        ]
-
-
-def write_wav(path: Path, samples: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(1)
-        wf.setframerate(SAMPLE_RATE)
-        wf.writeframes(samples)
-
-
-def write_wav_16bit(path: Path, voltages: list[float], vdd: float) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pcm = array.array(
-        "h", (max(-32768, min(32767, round((v / vdd - 0.5) * 65536.0))) for v in voltages)
-    )
-    if array.array("h", [1]).tobytes() != b"\x01\x00":
-        pcm.byteswap()
-    with wave.open(str(path), "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(SAMPLE_RATE)
-        wf.writeframes(pcm.tobytes())
-
-
-DAC_TRACKS = (0, 1, 2, 3, 7)
-
-
-async def collect_pwm(dut, num_samples: int):
-    for _ in range(num_samples):
-        frame = []
-        for _ in range(PWM_PERIOD):
-            await RisingEdge(dut.clk)
-            assert dut.uo_out.value.is_resolvable
-            frame.append(int(dut.uo_out.value))
-        yield frame
-
-
-async def collect_sample(dut, num_samples: int):
-    async for frame in collect_pwm(dut, num_samples):
-        # count high cycles over each 256-clock period to recover the PWM duty cycle (8-bit PCM sample)
-        yield [sum((val >> ch) & 1 for val in frame) for ch in range(len(FORMULAS))]
-
-
-async def _reset_dut(dut, a: int = 0x5, b: int = 0x1, c: int = 0x3, d: int = 0x0) -> None:
-    """Start the 2.048 MHz clock, drive `(a, b, c, d)` params, and hold `rst_n` low for 3 cycles."""
-    clock = Clock(dut.clk, PERIOD_PS, unit="ps", impl="gpi")
-    cocotb.start_soon(clock.start())
-    dut.ena.value = 1
-    dut.rst_n.value = 0
-    dut.ui_in.value = (b << 4) | a
-    dut.uio_in.value = (d << 4) | c
-    # wait 3 cycles so rst_n propagates past t=0 and non-blocking/unit-delay assignments take effect
-    await ClockCycles(dut.clk, 3)
-
-
-_DAC_DC_LUTS: dict[tuple[float, str, str, float | None, str, bool], list[list[float]]] = {}
-
-
-def _get_dac_dc_luts(ams: DacAmsBridge) -> list[list[float]]:
+def _get_adc_trip_points(ams: AdcAmsBridge) -> list[float]:
     key = (
         ams.vdd,
         ams.corner,
@@ -148,489 +64,335 @@ def _get_dac_dc_luts(ams: DacAmsBridge) -> list[list[float]]:
         str(ams.r2r_spice),
         ams.route_rc is not None,
     )
-    if key not in _DAC_DC_LUTS:
-        luts = ams.measure_dc_luts()
-        for ch, lut in enumerate(luts):
-            assert all(lut[k + 1] > lut[k] for k in range(255)), (
-                f"libngspice0 256-code DC LUT is non-monotonic on ch{ch} for {key}"
-            )
-        _DAC_DC_LUTS[key] = luts
-    return _DAC_DC_LUTS[key]
-
-
-async def _toggle_params_mid_frame(dut, params: tuple[int, int, int, int]) -> None:
-    """Update `ui_in`/`uio_in` at quarter-frame (clock 64) to verify glitch-free registered handoff."""
-    await Timer((PWM_PERIOD // 4) * PERIOD_PS - PERIOD_PS // 2, unit="ps")
-    await RisingEdge(dut.clk)
-    pa, pb, pc, pd = params
-    dut.ui_in.value = (pb << 4) | pa
-    dut.uio_in.value = (pd << 4) | pc
-
-
-async def _wait_frames(dut, num_frames: int) -> None:
-    if num_frames > 0:
-        await Timer(num_frames * PWM_PERIOD * PERIOD_PS - PERIOD_PS // 2, unit="ps")
-        await RisingEdge(dut.clk)
-
-
-async def collect_dac(dut, dac: R2RDacModel, num_samples: int):
-    """Collect full-track 8-bit R-2R DAC codes and `ua[4:0]` MSBs once per PWM frame."""
-    half = PWM_PERIOD // 2
-    for _ in range(num_samples):
-        await Timer(half * PERIOD_PS - PERIOD_PS // 2, unit="ps")
-        await RisingEdge(dut.clk)
-        yield (
-            dac.codes(),
-            [int(dut.ua.value[idx]) for idx in range(len(DAC_TRACKS))],
+    if key not in _ADC_TRIPS:
+        trips = ams.measure_trip_points()
+        assert all(trips[k + 1] > trips[k] for k in range(len(trips) - 1)), (
+            f"libngspice0 15-step ADC trip curve is non-monotonic for {key}: {trips}"
         )
-        await Timer((PWM_PERIOD - half) * PERIOD_PS - PERIOD_PS // 2, unit="ps")
-        await RisingEdge(dut.clk)
+        _ADC_TRIPS[key] = trips
+    return _ADC_TRIPS[key]
 
 
-async def collect_dac_ams(dut, ams: DacAmsBridge, num_samples: int):
-    """Collect continuous live `libngspice0` DAC voltages once per PWM frame."""
-    half = PWM_PERIOD // 2
-    for _ in range(num_samples):
-        await Timer(half * PERIOD_PS - PERIOD_PS // 2, unit="ps")
-        await RisingEdge(dut.clk)
-        yield ams.voltages()
-        await Timer((PWM_PERIOD - half) * PERIOD_PS - PERIOD_PS // 2, unit="ps")
-        await RisingEdge(dut.clk)
-
-
-async def _collect(agen):
-    return [item async for item in agen]
+async def init_dut(dut, dac0_sel: int = 0, dac1_sel: int = 1):
+    adc = R2RAdcModel(dut, drive_handle=dut.ua_in, expected_channels=4, vdd=3.3)
+    dac = R2RDacModel(dut, expected_channels=2, vdd=3.3)
+    clock = Clock(dut.clk, CLOCK_PERIOD_NS, unit="ns", impl="gpi")
+    cocotb.start_soon(clock.start())
+    dut.ena.value = 1
+    dut.rst_n.value = 0
+    dut.ui_in.value = 0
+    dut.uio_in.value = ((dac1_sel & 0x7) << 3) | (dac0_sel & 0x7)
+    dut.ua_in.value = 0
+    await ClockCycles(dut.clk, 4)
+    return adc, dac
 
 
 @cocotb.test()
-async def test_bytebeat(dut):
-    dut._log.info("Start")
-    dac = R2RDacModel(dut, expected_channels=len(DAC_TRACKS), vdd=3.3)
-    ams = DacAmsBridge.create(dut, expected_channels=len(DAC_TRACKS), vdd=3.3)
+async def test_reset_and_standby_power_gating(dut):
+    """Verify rst_n=0 and combinational ena=0 clamp all 4 ADC and 2 DAC ladders to 0 V."""
+    adc, dac = await init_dut(dut, dac0_sel=2, dac1_sel=1)
 
-    await _reset_dut(dut, 0x5, 0x1, 0x3, 0x0)
-    assert dut.uio_oe.value == 0
-    assert dut.uio_out.value == 0
-    assert dac.codes() == [0] * 5 and dac.voltages() == [0.0] * 5
-    assert all(int(dut.ua.value[ch]) == 0 for ch in range(5))
+    # During reset: all 4 ADC ladders (in=~4'hF=0) and both DAC ladders (in=0) clamped to 0 V.
+    assert int(dut.uio_oe.value) == 0x00
+    assert int(dut.uio_out.value) == 0x00
+    assert adc.ladder_codes() == [0] * 4
+    assert dac.codes() == [0, 0] and dac.voltages() == [0.0, 0.0]
+    assert int(dut.ua.value[4]) == 0 and int(dut.ua.value[5]) == 0
 
+    # Release reset and drive CV inputs so the synth produces non-zero DAC codes.
+    adc.set_codes([10, 2, 10, 0])
+    adc.start()
+    dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 3 * PWM_PERIOD + 128)
+    assert any(c != 0 for c in dac.codes()), f"Expected active DAC output, got {dac.codes()}"
+
+    # Deselecting project (ena=0) combinationally clamps both DACs and all 4 ADCs without a clock edge.
+    dut.ena.value = 0
+    await Timer(10, unit="ns")
+    assert adc.ladder_codes() == [0] * 4
+    assert dac.codes() == [0, 0] and dac.voltages() == [0.0, 0.0]
+    assert int(dut.ua.value[4]) == 0 and int(dut.ua.value[5]) == 0
+    dut.ena.value = 1
+    adc.stop()
+
+
+@cocotb.test()
+async def test_end_to_end_mixed_signal(dut):
+    """Bit-exact end-to-end check: live 4x4b ADC -> 5x PWM + 2x 8-bit R-2R DAC."""
+    dac0_sel, dac1_sel = 2, 1  # untitleddroid on DAC0, fractaltrees on DAC1
+    adc_py, dac = await init_dut(dut, dac0_sel=dac0_sel, dac1_sel=dac1_sel)
+    adc_ams = AdcAmsBridge.create(
+        dut, drive_handle=dut.ua_in, expected_channels=4, vdd=3.3, in_nets=ADC_IN_NETS
+    )
+    dac_ams = DacAmsBridge.create(dut, expected_channels=2, vdd=3.3, out_nets=DAC_OUT_NETS)
+    mixed_ams = (
+        MixedSignalAmsBridge(dut, adc_ams, dac_ams)
+        if (adc_ams is not None and dac_ams is not None)
+        else None
+    )
     analog_vcd = Path(__file__).resolve().parent / "output" / f"analog_{SIM_SUFFIX}_{SIM_NAME}.vcd"
-    if ams is not None:
-        await ams.start(duration_ns=5_000_000.0, analog_vcd=analog_vcd)
 
-    def _check_frame(
-        f_idx: int,
-        active_params: tuple[int, int, int, int],
-        frame: list[int],
-        got_codes: list[int],
-        got_ua: list[int],
-        got_v_spice: list[float] | None,
-    ) -> float:
-        ea, eb, ec, ed = active_params
-        exp_sample = [fn(f_idx, ea, eb, ec, ed) for fn in FORMULAS]
-        exp_frame = [
-            sum((count < exp_sample[ch]) << ch for ch in range(len(FORMULAS)))
-            for count in range(PWM_PERIOD)
-        ]
-        assert frame == exp_frame, "\n" + "\n".join(
-            difflib.unified_diff(
-                pprint.pformat(exp_frame).splitlines(),
-                pprint.pformat(frame).splitlines(),
-                fromfile="golden",
-                tofile=SIM_SUFFIX,
-                lineterm="",
+    dac_luts: list[list[float]] | None = None
+    adc_trips: list[float] | None = None
+    if mixed_ams is not None and dac_ams is not None and adc_ams is not None:
+        adc_trips = _get_adc_trip_points(adc_ams)
+        dac_luts = dac_ams.measure_dc_luts()
+        for ch, lut in enumerate(dac_luts):
+            assert all(lut[k + 1] > lut[k] for k in range(255)), (
+                f"libngspice0 256-code DC LUT is non-monotonic on ch{ch}"
             )
+        # Spot-check worst-case 3.0V ss/res_ff 125C monotonicity & INL with PEX + post-PnR SPEF.
+        ams_wc = DacAmsBridge.create(
+            dut,
+            expected_channels=2,
+            vdd=3.0,
+            corner="ss",
+            rcorner="res_ff",
+            temp=125.0,
+            route_rc=dac_ams.route_rc,
         )
-        pwm_codes = [sum((val >> ch) & 1 for val in frame) for ch in DAC_TRACKS]
-        exp_codes = [exp_sample[ch] for ch in DAC_TRACKS]
-        assert got_codes == pwm_codes == exp_codes, (
-            f"Frame {f_idx} DAC vs PWM vs ref mismatch: "
-            f"dac={got_codes}, pwm={pwm_codes}, ref={exp_codes}"
+        assert ams_wc is not None
+        wc_luts = ams_wc.measure_dc_luts()
+        wc_lsb = 3.0 / 256.0
+        wc_max_err = 0.0
+        for ch, lut in enumerate(wc_luts):
+            assert all(lut[k + 1] > lut[k] for k in range(255)), (
+                f"ss/res_ff 3.0V 125C 256-code DC LUT is non-monotonic on ch{ch}"
+            )
+            ch_err = max(abs(lut[k] - k * wc_lsb) / wc_lsb for k in range(256))
+            wc_max_err = max(wc_max_err, ch_err)
+            assert ch_err < 0.95, f"ss/res_ff 3.0V 125C ch{ch} max err {ch_err:.4f} LSB >= 0.95"
+        dut._log.info(
+            "DAC AMS worst-case PVT DC check (ss/res_ff @ 3.0V 125C, 2 ch, ladder=%s): "
+            "monotonic, max|V_lut - V_ideal|=%.4f LSB",
+            dac_ams.r2r_spice.name,
+            wc_max_err,
         )
-        exp_ua = [(c >> 7) & 1 for c in exp_codes]
-        assert got_ua == exp_ua, (
-            f"Frame {f_idx} DAC ua[4:0] MSB mismatch: got {got_ua}, expected {exp_ua}"
-        )
-        worst = 0.0
-        if got_v_spice is not None and ams is not None:
-            lsb = ams.vdd / 256.0
-            for ch, (code, v_got) in enumerate(zip(exp_codes, got_v_spice, strict=True)):
-                v_ideal = code * lsb
-                err_lsb = abs(v_got - v_ideal) / lsb
-                worst = max(worst, err_lsb)
-                assert err_lsb < 0.5, (
-                    f"Frame {f_idx} ch{ch} code={code}: "
-                    f"V_spice={v_got:.4f}V vs ideal={v_ideal:.4f}V ({err_lsb:.4f} LSB >= 0.5)"
-                )
-        return worst
+
+    def _drive_cv(codes: list[int]) -> None:
+        if mixed_ams is not None and adc_ams is not None and adc_trips is not None:
+            adc_ams.set_codes(codes, trips=adc_trips)
+        else:
+            adc_py.set_codes(codes)
+
+    _drive_cv([5, 1, 3, 0])
+    if mixed_ams is not None:
+        await mixed_ams.start(duration_ns=2_500_000.0, analog_vcd=analog_vcd)
+    else:
+        adc_py.start()
 
     try:
-        dut.rst_n.value = 1  # take out of reset
-        # advance to the first rising edge where rst_n == 1 is sampled (start of the first 256-clock PWM period)
-        await ClockCycles(dut.clk, 1)
+        dut.rst_n.value = 1
+        await RisingEdge(dut.clk)
 
-        # Sweep default params, then toggle ui_in/uio_in *mid-frame* (clock 64 of segment's 1st
-        # frame) across edge cases:
-        #   - (0, 0, 0, 0): exercises fractaltrees' ab==0 divide-by-zero guard
-        #   - (f, f, f, f): max nibble values (fractaltrees original params)
-        # Because `pcm` is registered in `megabytebeat`, mid-frame toggling must NOT disturb the
-        # in-flight 256-clock PWM waveform or live clock-128 DAC voltage; the new params take
-        # effect cleanly on the following frame.
-        param_schedule = [
-            (16, (0x5, 0x1, 0x3, 0x0)),
-            (4, (0x0, 0x0, 0x0, 0x0)),
-            (4, (0xF, 0xF, 0xF, 0xF)),
-        ]
+        # Frame 0 (cyc 0..255): reset State.pcm = 0; tick 3 latches t=0 (0x0a2a) at end of frame 0.
+        # Frames 1..3: t=0,1,2 with init params (10,2,10,0).
+        # Tick 15 (end of frame 3) latches CV1=(5,1,3,0) -> frames 4..7: t=3..6 with (5,1,3,0).
+        # At start of frame 4, switch analog CV to CV2=(10,2,10,0) & switch DAC track selectors to (0,4).
+        # Tick 31 (end of frame 7) latches CV2=(10,2,10,0) -> frames 8..11: t=7..10 with (10,2,10,0).
         max_err_lsb = 0.0
-        frame_idx = 0
-        latched_params = param_schedule[0][1]
-        for seg_idx, (seg_samples, seg_params) in enumerate(param_schedule):
-            toggle_task = (
-                cocotb.start_soon(_toggle_params_mid_frame(dut, seg_params))
-                if seg_idx > 0
-                else None
-            )
-            pwm_task = cocotb.start_soon(_collect(collect_pwm(dut, seg_samples)))
-            dac_task = cocotb.start_soon(_collect(collect_dac(dut, dac, seg_samples)))
-            ams_task = (
-                cocotb.start_soon(_collect(collect_dac_ams(dut, ams, seg_samples)))
-                if ams is not None
-                else None
-            )
-            if toggle_task is not None:
-                await toggle_task
-            pwm_frames = await pwm_task
-            dac_frames = await dac_task
-            ams_frames = await ams_task if ams_task is not None else [None] * seg_samples
+        max_tran_vs_lut_lsb = 0.0
+        for frame in range(12):
+            if frame == 4:
+                _drive_cv([10, 2, 10, 0])
+                dac0_sel, dac1_sel = 0, 4  # the42melody on DAC0, sierpinskiharmony on DAC1
+                dut.uio_in.value = ((dac1_sel & 0x7) << 3) | (dac0_sel & 0x7)
 
-            for local_idx, (frame, (got_codes, got_ua), got_v_spice) in enumerate(
-                zip(pwm_frames, dac_frames, ams_frames, strict=True)
-            ):
-                active_params = latched_params if (seg_idx > 0 and local_idx == 0) else seg_params
-                max_err_lsb = max(
-                    max_err_lsb,
-                    _check_frame(frame_idx, active_params, frame, got_codes, got_ua, got_v_spice),
-                )
-                frame_idx += 1
-            latched_params = seg_params
+            pwm_ones = [0] * 8
+            dac_mid = None
+            ua_mid = None
+            v_spice_mid = None
+            for cyc in range(PWM_PERIOD):
+                await RisingEdge(dut.clk)
+                uo = int(dut.uo_out.value)
+                for ch in range(8):
+                    pwm_ones[ch] += (uo >> ch) & 1
+                if cyc == PWM_PERIOD // 2:
+                    dac_mid = dac.codes()
+                    ua_mid = [int(dut.ua.value[4]), int(dut.ua.value[5])]
+                    if mixed_ams is not None and dac_ams is not None:
+                        v_spice_mid = dac_ams.voltages()
 
-        # ena=0 -> 1 live standby clamp and recovery within the same active non-zero frame.
-        active_codes = dac.codes()
-        assert any(c > 0 for c in active_codes), (
-            f"Expected non-zero active DAC codes: {active_codes}"
-        )
-        dut.ena.value = 0
-        await ClockCycles(dut.clk, 1)
-        assert dac.codes() == [0] * 5 and dac.voltages() == [0.0] * 5
-        assert all(int(dut.ua.value[ch]) == 0 for ch in range(5))
-        max_standby_mv = 0.0
-        if ams is not None:
+            assert pwm_ones[4] == 0 and pwm_ones[5] == 0 and pwm_ones[6] == 0
+            if frame == 0:
+                exp_tracks = [0, 0, 0, 0, 0]
+            else:
+                t_idx = frame - 1
+                if frame <= 3:
+                    params = (10, 2, 10, 0)
+                elif frame <= 7:
+                    params = (5, 1, 3, 0)
+                else:
+                    params = (10, 2, 10, 0)
+                exp_tracks = eval_tracks_py(t_idx, *params)
+
+            got_pwm = [pwm_ones[p] for p in PWM_PINS]
+            assert got_pwm == exp_tracks, (
+                f"Frame {frame} PWM mismatch: got {got_pwm}, exp {exp_tracks}"
+            )
+
+            exp_dacs = [exp_tracks[dac0_sel], exp_tracks[dac1_sel]]
+            assert dac_mid == exp_dacs, (
+                f"Frame {frame} DAC 8-bit mismatch: got {dac_mid}, exp {exp_dacs}"
+            )
+            assert ua_mid == [(c >> 7) & 1 for c in exp_dacs]
+            if v_spice_mid is not None and dac_luts is not None and dac_ams is not None:
+                lsb = dac_ams.vdd / 256.0
+                for ch, (code, v_got) in enumerate(zip(exp_dacs, v_spice_mid, strict=True)):
+                    v_lut = dac_luts[ch][code]
+                    tran_err = abs(v_got - v_lut) / lsb
+                    max_tran_vs_lut_lsb = max(max_tran_vs_lut_lsb, tran_err)
+                    assert tran_err < 0.05, (
+                        f"Frame {frame} ch{ch} code={code}: "
+                        f"V_tran={v_got:.5f}V vs DC LUT={v_lut:.5f}V ({tran_err:.4f} LSB)"
+                    )
+                    v_ideal = code * lsb
+                    err_lsb = abs(v_got - v_ideal) / lsb
+                    max_err_lsb = max(max_err_lsb, err_lsb)
+                    assert err_lsb < 0.5, (
+                        f"Frame {frame} ch{ch} code={code}: "
+                        f"V_spice={v_got:.4f}V vs ideal={v_ideal:.4f}V ({err_lsb:.4f} LSB >= 0.5)"
+                    )
+
+        if mixed_ams is not None and dac_ams is not None:
+            dut.ena.value = 0
             await Timer(25, unit="us")
-            standby_v = ams.voltages()
+            standby_v = dac_ams.voltages()
             max_standby_mv = max(abs(v) for v in standby_v) * 1e3
             assert max_standby_mv < 1.0, f"Standby V_spice={standby_v} exceeds 1 mV"
-
-        dut.ena.value = 1
-        await ClockCycles(dut.clk, 1)
-        assert dac.codes() == active_codes, (
-            f"ena=1 recovery DAC codes mismatch: got {dac.codes()}, expected {active_codes}"
-        )
-        assert [int(dut.ua.value[ch]) for ch in range(5)] == [(c >> 7) & 1 for c in active_codes]
-        max_ena_recover_lsb = 0.0
-        if ams is not None:
-            await Timer(25, unit="us")
-            lsb = ams.vdd / 256.0
-            for ch, (code, v_got) in enumerate(zip(active_codes, ams.voltages(), strict=True)):
-                err_lsb = abs(v_got - code * lsb) / lsb
-                max_ena_recover_lsb = max(max_ena_recover_lsb, err_lsb)
-                max_err_lsb = max(max_err_lsb, err_lsb)
-                assert err_lsb < 0.5, (
-                    f"ena=1 recovery ch{ch} code={code}: "
-                    f"V_spice={v_got:.4f}V vs ideal={code * lsb:.4f}V ({err_lsb:.4f} LSB >= 0.5)"
-                )
-
-        # Mid-stream rst_n=0 clamps all 5 DACs to <1 mV and restarts cleanly at t=0 on rst_n=1.
-        restart_params = (0x5, 0x1, 0x3, 0x0)
-        ra, rb, rc, rd = restart_params
-        dut.rst_n.value = 0
-        dut.ui_in.value = (rb << 4) | ra
-        dut.uio_in.value = (rd << 4) | rc
-        await ClockCycles(dut.clk, 3)
-        assert dac.codes() == [0] * 5 and dac.voltages() == [0.0] * 5
-        assert all(int(dut.ua.value[ch]) == 0 for ch in range(5))
-        max_reset_mv = 0.0
-        if ams is not None:
-            await Timer(25, unit="us")
-            reset_v = ams.voltages()
-            max_reset_mv = max(abs(v) for v in reset_v) * 1e3
-            assert max_reset_mv < 1.0, f"Mid-stream rst_n=0 V_spice={reset_v} exceeds 1 mV"
-
-        dut.rst_n.value = 1
-        await ClockCycles(dut.clk, 1)
-        restart_samples = 4
-        pwm_task = cocotb.start_soon(_collect(collect_pwm(dut, restart_samples)))
-        dac_task = cocotb.start_soon(_collect(collect_dac(dut, dac, restart_samples)))
-        ams_task = (
-            cocotb.start_soon(_collect(collect_dac_ams(dut, ams, restart_samples)))
-            if ams is not None
-            else None
-        )
-        pwm_frames = await pwm_task
-        dac_frames = await dac_task
-        ams_frames = await ams_task if ams_task is not None else [None] * restart_samples
-        for t_idx, (frame, (got_codes, got_ua), got_v_spice) in enumerate(
-            zip(pwm_frames, dac_frames, ams_frames, strict=True)
-        ):
-            max_err_lsb = max(
-                max_err_lsb,
-                _check_frame(t_idx, restart_params, frame, got_codes, got_ua, got_v_spice),
-            )
-
-        if ams is not None:
             dut._log.info(
-                f"ngspice AMS co-sim ({ams.channels} ch @ {ams.vdd:.1f}V, "
-                f"{frame_idx}+{restart_samples} frames): "
-                f"max|V_spice - V_ideal|={max_err_lsb:.4f} LSB, "
-                f"ena_recover={max_ena_recover_lsb:.4f} LSB, "
-                f"standby_max={max_standby_mv:.3f} mV, reset_max={max_reset_mv:.3f} mV"
+                f"Mixed-signal ngspice AMS co-sim (4x ADC + {dac_ams.channels}x DAC @ {dac_ams.vdd:.1f}V): "
+                f"max|V_tran - V_lut|={max_tran_vs_lut_lsb:.4f} LSB, "
+                f"max|V_spice - V_ideal|={max_err_lsb:.4f} LSB, standby_max={max_standby_mv:.3f} mV"
             )
+            dut.ena.value = 1
     finally:
-        if ams is not None:
-            await ams.stop()
+        if mixed_ams is not None:
+            await mixed_ams.stop()
+        else:
+            adc_py.stop()
 
-    if ams is not None:
+    if mixed_ams is not None:
         assert analog_vcd.is_file() and analog_vcd.stat().st_size > 0, (
             f"Expected non-empty analog VCD at {analog_vcd}"
         )
 
 
 @cocotb.test()
-@cocotb.parametrize((("start", "end"), [(0, 16), (120, 136), (240, 256)]))
-async def test_dac_ams_dc_vs_tran(dut, start: int, end: int):
-    """Verify BSIM3v3 + LVS R-2R 256-code DC LUT matches live transient `libngspice0` co-sim."""
-    dac = R2RDacModel(dut, expected_channels=len(DAC_TRACKS), vdd=3.3)
-    ams = DacAmsBridge.create(dut, expected_channels=len(DAC_TRACKS), vdd=3.3)
-    if ams is None:
-        dut._log.info("Skipping test_dac_ams_dc_vs_tran (ngspice AMS co-sim unavailable)")
-        return
-
-    await _reset_dut(dut, 0x5, 0x1, 0x3, 0x0)
-    dac_luts = _get_dac_dc_luts(ams)
-
-    dut.rst_n.value = 1
-    await ClockCycles(dut.clk, 1)
-    await _wait_frames(dut, start)
-
-    count = end - start
-    win_ns = (count + 4) * PWM_PERIOD * PERIOD_PS / 1000.0
-    await ams.start(duration_ns=win_ns, analog_vcd=None)
-    try:
-        dac_task = cocotb.start_soon(_collect(collect_dac(dut, dac, count)))
-        ams_task = cocotb.start_soon(_collect(collect_dac_ams(dut, ams, count)))
-        dac_frames = await dac_task
-        ams_frames = await ams_task
-    finally:
-        await ams.stop()
-
-    lsb = ams.vdd / 256.0
-    max_tran_vs_lut_lsb = 0.0
-    max_tran_err_lsb = 0.0
-    for offset, ((codes, _), v_spice) in enumerate(zip(dac_frames, ams_frames, strict=True)):
-        frame_idx = start + offset
-        for dac_ch, track_ch in enumerate(DAC_TRACKS):
-            code = codes[dac_ch]
-            v_lut = dac_luts[dac_ch][code]
-            v_live = v_spice[dac_ch]
-            tran_err = abs(v_live - v_lut) / lsb
-            max_tran_vs_lut_lsb = max(max_tran_vs_lut_lsb, tran_err)
-            assert tran_err < 0.05, (
-                f"{FORMULAS[track_ch].__name__} frame {frame_idx} code={code}: "
-                f"live V_tran={v_live:.5f}V vs DC LUT={v_lut:.5f}V ({tran_err:.4f} LSB >= 0.05)"
-            )
-            ideal_err = abs(v_live - code * lsb) / lsb
-            max_tran_err_lsb = max(max_tran_err_lsb, ideal_err)
-            assert ideal_err < 0.5, (
-                f"{FORMULAS[track_ch].__name__} frame {frame_idx} code={code}: "
-                f"live V_tran={v_live:.5f}V vs ideal={code * lsb:.5f}V ({ideal_err:.4f} LSB >= 0.5)"
-            )
-
-    dut._log.info(
-        f"DAC AMS DC vs tran check (frames {start}:{end}): "
-        f"max|V_tran - V_lut|={max_tran_vs_lut_lsb:.4f} LSB, "
-        f"max|V_tran - V_ideal|={max_tran_err_lsb:.4f} LSB"
-    )
-
-
-@cocotb.test()
 @cocotb.parametrize(
     (
-        ("corner", "rcorner", "vdd", "temp", "max_ideal_lsb"),
+        ("corner", "rcorner", "vdd", "temp", "max_dnl", "max_inl"),
         [
-            ("ss", "res_ff", 3.0, 125.0, 0.95),
-            ("typical", "res_typical", 5.0, 27.0, 0.50),
+            ("typical", "res_typical", 3.3, 27.0, 0.25, 0.50),
+            ("ss", "res_ff", 3.0, 125.0, 0.50, 0.50),
+            ("typical", "res_typical", 5.0, 27.0, 0.25, 0.50),
         ],
     )
 )
-async def test_dac_ams_pvt(
+async def test_adc_ams_pvt(
     dut,
     corner: str,
     rcorner: str,
     vdd: float,
     temp: float,
-    max_ideal_lsb: float,
+    max_dnl: float,
+    max_inl: float,
 ):
-    """Spot-check worst-case PVT (3.0V ss/res_ff 125C) and dual-voltage (5.0V) transient settling."""
-    dac = R2RDacModel(dut, expected_channels=len(DAC_TRACKS), vdd=vdd)
-    ams = DacAmsBridge.create(
+    """Verify BSIM3v3 + LVS/PEX 4x ramp ADC trip linearity & live transient quantization across PVT."""
+    adc_ams = AdcAmsBridge.create(
         dut,
-        expected_channels=len(DAC_TRACKS),
+        drive_handle=dut.ua_in,
+        expected_channels=4,
         vdd=vdd,
         corner=corner,
         rcorner=rcorner,
         temp=temp,
+        in_nets=ADC_IN_NETS,
     )
-    if ams is None:
-        dut._log.info("Skipping test_dac_ams_pvt (ngspice AMS co-sim unavailable)")
+    if adc_ams is None:
+        dut._log.info("Skipping test_adc_ams_pvt (ngspice AMS co-sim unavailable)")
         return
 
-    await _reset_dut(dut, 0x5, 0x1, 0x3, 0x0)
-    dac_luts = _get_dac_dc_luts(ams)
+    _, dac = await init_dut(dut, dac0_sel=2, dac1_sel=1)
 
-    start, end = 124, 132  # Crosses 127 -> 128 MSB carry at t=128 and 128 -> 127 at t=129
-    dut.rst_n.value = 1
-    await ClockCycles(dut.clk, 1)
-    await _wait_frames(dut, start)
-
-    count = end - start
-    win_ns = (count + 4) * PWM_PERIOD * PERIOD_PS / 1000.0
-    await ams.start(duration_ns=win_ns, analog_vcd=None)
-    try:
-        dac_task = cocotb.start_soon(_collect(collect_dac(dut, dac, count)))
-        ams_task = cocotb.start_soon(_collect(collect_dac_ams(dut, ams, count)))
-        dac_frames = await dac_task
-        ams_frames = await ams_task
-    finally:
-        await ams.stop()
-
-    seen_codes = [c for codes, _ in dac_frames for c in codes]
-    assert 127 in seen_codes and 128 in seen_codes, (
-        f"Expected MSB carry codes 127 & 128 in window {start}:{end}, saw {sorted(set(seen_codes))}"
+    trips = _get_adc_trip_points(adc_ams)
+    assert 0.0 < trips[0] < trips[-1] < vdd, (
+        f"[{corner}/{rcorner} {vdd}V {temp}C] trip points [{trips[0]:.3f}..{trips[-1]:.3f}]V "
+        f"outside (0, {vdd:.1f}V)"
+    )
+    lin = analog.measure_linearity(trips)
+    assert lin.monotonic and lin.max_dnl < max_dnl and lin.max_inl < max_inl, (
+        f"[{corner}/{rcorner} {vdd}V {temp}C] ADC linearity failed: "
+        f"DNL={lin.max_dnl:.4f} (limit {max_dnl}), INL={lin.max_inl:.4f} (limit {max_inl})"
     )
 
-    lsb = ams.vdd / 256.0
-    max_tran_vs_lut_lsb = 0.0
-    max_tran_err_lsb = 0.0
-    for offset, ((codes, _), v_spice) in enumerate(zip(dac_frames, ams_frames, strict=True)):
-        frame_idx = start + offset
-        for dac_ch, track_ch in enumerate(DAC_TRACKS):
-            code = codes[dac_ch]
-            v_lut = dac_luts[dac_ch][code]
-            v_live = v_spice[dac_ch]
-            tran_err = abs(v_live - v_lut) / lsb
-            max_tran_vs_lut_lsb = max(max_tran_vs_lut_lsb, tran_err)
-            assert tran_err < 0.05, (
-                f"[{corner}/{rcorner} {vdd}V {temp}C] {FORMULAS[track_ch].__name__} "
-                f"frame {frame_idx} code={code}: "
-                f"live V_tran={v_live:.5f}V vs DC LUT={v_lut:.5f}V ({tran_err:.4f} LSB >= 0.05)"
-            )
-            ideal_err = abs(v_live - code * lsb) / lsb
-            max_tran_err_lsb = max(max_tran_err_lsb, ideal_err)
-            assert ideal_err < max_ideal_lsb, (
-                f"[{corner}/{rcorner} {vdd}V {temp}C] {FORMULAS[track_ch].__name__} "
-                f"frame {frame_idx} code={code}: "
-                f"live V_tran={v_live:.5f}V vs ideal={code * lsb:.5f}V "
-                f"({ideal_err:.4f} LSB >= {max_ideal_lsb})"
-            )
+    # Sweep 1 exercises boundary rails (0 V -> 0, VDD -> 15) + mid-scale [7, 10].
+    # Sweep 2 swaps rails and exercises wraparound reset with [15, 0, 12, 3].
+    vin1 = [
+        0.0,
+        vdd,
+        AdcAmsBridge.code_voltage(7, trips, vdd),
+        AdcAmsBridge.code_voltage(10, trips, vdd),
+    ]
+    exp_codes1 = tuple(AdcAmsBridge.predict_code(v, trips) for v in vin1)
+    assert exp_codes1 == (0, 15, 7, 10), f"Unexpected Sweep 1 predicted codes: {exp_codes1}"
+
+    vin2 = [
+        vdd,
+        0.0,
+        AdcAmsBridge.code_voltage(12, trips, vdd),
+        AdcAmsBridge.code_voltage(3, trips, vdd),
+    ]
+    exp_codes2 = tuple(AdcAmsBridge.predict_code(v, trips) for v in vin2)
+    assert exp_codes2 == (15, 0, 12, 3), f"Unexpected Sweep 2 predicted codes: {exp_codes2}"
+
+    adc_ams.set_voltages(vin1)
+    await adc_ams.start(duration_ns=1_600_000.0, analog_vcd=None)
+    try:
+        dut.rst_n.value = 1
+        await RisingEdge(dut.clk)
+
+        # Wait through Frames 0..3 (Sweep 1), switch to Sweep 2 at Frame 4, verify Frame 4 (t=3) & Frame 8 (t=7).
+        for frame in range(9):
+            if frame == 4:
+                adc_ams.set_voltages(vin2)
+                vsums = adc_ams.vsum_voltages()
+                assert all(-0.1 <= vs <= vdd + 0.1 for vs in vsums), (
+                    f"Out-of-range vsum voltages: {vsums}"
+                )
+
+            pwm_ones = [0] * 8
+            dac_mid = None
+            for cyc in range(PWM_PERIOD):
+                await RisingEdge(dut.clk)
+                if frame in (4, 8):
+                    uo = int(dut.uo_out.value)
+                    for ch in range(8):
+                        pwm_ones[ch] += (uo >> ch) & 1
+                    if cyc == PWM_PERIOD // 2:
+                        dac_mid = dac.codes()
+
+            if frame == 4:
+                exp_f4 = eval_tracks_py(3, *exp_codes1)
+                got_f4 = [pwm_ones[p] for p in PWM_PINS]
+                assert got_f4 == exp_f4, (
+                    f"[{corner}/{rcorner} {vdd}V {temp}C] Sweep 1 Frame 4 PWM mismatch: "
+                    f"got {got_f4}, expected {exp_f4} (codes={exp_codes1})"
+                )
+                assert dac_mid == [exp_f4[2], exp_f4[1]]
+            elif frame == 8:
+                exp_f8 = eval_tracks_py(7, *exp_codes2)
+                got_f8 = [pwm_ones[p] for p in PWM_PINS]
+                assert got_f8 == exp_f8, (
+                    f"[{corner}/{rcorner} {vdd}V {temp}C] Sweep 2 Frame 8 PWM mismatch: "
+                    f"got {got_f8}, expected {exp_f8} (codes={exp_codes2})"
+                )
+                assert dac_mid == [exp_f8[2], exp_f8[1]]
+    finally:
+        await adc_ams.stop()
 
     dut._log.info(
-        f"DAC AMS PVT check ({corner}/{rcorner} @ {vdd:.1f}V {temp:.0f}C, frames {start}:{end}): "
-        f"max|V_tran - V_lut|={max_tran_vs_lut_lsb:.4f} LSB, "
-        f"max|V_tran - V_ideal|={max_tran_err_lsb:.4f} LSB"
+        f"ADC AMS PVT check ({corner}/{rcorner} @ {vdd:.1f}V {temp:.0f}C, ladder={adc_ams.r2r_spice.name}): "
+        f"Vtrip={trips[0]:.3f}..{trips[-1]:.3f}V, max|DNL|={lin.max_dnl:.4f} LSB, "
+        f"max|INL|={lin.max_inl:.4f} LSB, live sweeps {exp_codes1} & {exp_codes2} bit-exact"
     )
-
-
-@cocotb.test()
-async def test_wav(dut):
-    dac = R2RDacModel(dut, expected_channels=len(DAC_TRACKS), vdd=3.3)
-    ams = DacAmsBridge.create(dut, expected_channels=len(DAC_TRACKS), vdd=3.3)
-    a, b, c, d = 0x5, 0x1, 0x3, 0x0
-    await _reset_dut(dut, a, b, c, d)
-
-    default_samples = 256 if os.environ.get("GATES") == "yes" else 8 * SAMPLE_RATE
-    num_samples = int(os.environ.get("NUM_SAMPLES", str(default_samples)))
-    dac_luts = _get_dac_dc_luts(ams) if ams is not None else None
-
-    dut.rst_n.value = 1  # take out of reset
-    # advance to the first rising edge where rst_n == 1 is sampled (start of the first 256-clock PWM period)
-    await ClockCycles(dut.clk, 1)
-
-    pwm_task = cocotb.start_soon(_collect(collect_sample(dut, num_samples)))
-    dac_task = cocotb.start_soon(_collect(collect_dac(dut, dac, num_samples)))
-    samples = await pwm_task
-    dac_frames = await dac_task
-
-    expected = list(golden_sample(num_samples, a, b, c, d))
-
-    out_dir = Path(__file__).resolve().parent / "output"
-    max_ams_err_lsb = 0.0
-    sum_sq_err_lsb = 0.0
-    total_ams_pts = 0
-    for dac_ch, track_ch in enumerate(DAC_TRACKS):
-        fn = FORMULAS[track_ch]
-        write_wav(
-            out_dir / f"{fn.__name__}_{SIM_SUFFIX}.wav",
-            bytes([s[track_ch] for s in samples]),
-        )
-        write_wav(
-            out_dir / f"{fn.__name__}_{SIM_SUFFIX}_dac.wav",
-            bytes([codes[dac_ch] for codes, _ in dac_frames]),
-        )
-        write_wav(
-            out_dir / f"{fn.__name__}_golden.wav",
-            bytes([s[track_ch] for s in expected]),
-        )
-        if ams is not None and dac_luts is not None:
-            lsb = ams.vdd / 256.0
-            v_track: list[float] = []
-            for codes, _ in dac_frames:
-                code = codes[dac_ch]
-                v_val = dac_luts[dac_ch][code]
-                v_track.append(v_val)
-                err = abs(v_val - code * lsb) / lsb
-                max_ams_err_lsb = max(max_ams_err_lsb, err)
-                sum_sq_err_lsb += err * err
-                total_ams_pts += 1
-
-            write_wav(
-                out_dir / f"{fn.__name__}_{SIM_SUFFIX}_ams.wav",
-                bytes([max(0, min(255, round(v / lsb))) for v in v_track]),
-            )
-            write_wav_16bit(
-                out_dir / f"{fn.__name__}_{SIM_SUFFIX}_ams_16bit.wav",
-                v_track,
-                vdd=ams.vdd,
-            )
-
-    for track_ch in DAC_TRACKS:
-        fn = FORMULAS[track_ch]
-        pwm_wav = out_dir / f"{fn.__name__}_{SIM_SUFFIX}.wav"
-        dac_wav = out_dir / f"{fn.__name__}_{SIM_SUFFIX}_dac.wav"
-        golden_wav = out_dir / f"{fn.__name__}_golden.wav"
-        assert filecmp.cmp(dac_wav, pwm_wav, shallow=False), (
-            f"{dac_wav.name} differs from {pwm_wav.name}"
-        )
-        assert filecmp.cmp(pwm_wav, golden_wav, shallow=False), (
-            f"{pwm_wav.name} differs from {golden_wav.name}"
-        )
-        if ams is not None:
-            ams_wav = out_dir / f"{fn.__name__}_{SIM_SUFFIX}_ams.wav"
-            assert filecmp.cmp(ams_wav, golden_wav, shallow=False), (
-                f"{ams_wav.name} differs from {golden_wav.name}"
-            )
-
-    if ams is not None and total_ams_pts > 0:
-        rms_err_lsb = math.sqrt(sum_sq_err_lsb / total_ams_pts)
-        dut._log.info(
-            f"AMS WAV check ({num_samples} samples = {num_samples / SAMPLE_RATE:.3f}s, SPICE DC LUT): "
-            f"max|V_ams - V_ideal|={max_ams_err_lsb:.4f} LSB, rms={rms_err_lsb:.4f} LSB"
-        )

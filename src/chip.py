@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Programmatic LibreLane placement & config generator for Tiny Tapeout and ISHI-KAI.
 
-Derives passive `r2r_ladder_8bit` macro anchors and disjoint, tapcell-free `clkbuf_20`
-DAC driver placements directly from XLS-generated Verilog and target pin/floorplan geometry,
-eliminating hand-maintained coordinates from `src/config.json` and `ishikai/config.yaml`.
+Derives passive `r2r_ladder_4bit_sum` (ADC) and `r2r_ladder_8bit` (DAC) macro anchors plus
+disjoint, tapcell-free `clkbuf_20` DAC driver placements directly from XLS-generated Verilog and
+target pin/floorplan geometry, eliminating hand-maintained coordinates from `src/config.json` and
+`ishikai/config.yaml`.
 """
 
 from __future__ import annotations
 
 import argparse
 import copy
+from dataclasses import dataclass
 import json
 import math
 import os
@@ -31,6 +33,13 @@ TAP_W = 1.12  # gf180mcu_fd_sc_mcu7t5v0__filltie (2 sites)
 TAP_PITCH = 39.20  # 70 sites
 CLKBUF20_W = 34.72  # gf180mcu_fd_sc_mcu7t5v0__clkbuf_20 (62 sites)
 
+ADC_CELL_NAME = "r2r_ladder_4bit_sum"
+ADC_MACRO_W = 28.00
+ADC_MACRO_H = 15.12
+ADC_SUM_IN_PIN_X = 25.36
+ADC_SUM_IN_PIN_Y = 13.16
+
+DAC_CELL_NAME = "r2r_ladder_8bit"
 DAC_MACRO_W = 70.00
 DAC_MACRO_H = 26.32
 DAC_IN_PIN_X = 2.62
@@ -40,13 +49,23 @@ DAC_OUT_PIN_Y = 24.36
 FP_MACRO_HORIZONTAL_HALO = 4.8
 FP_MACRO_VERTICAL_HALO = 4.0
 
-IGNORE_DISCONNECTED_MODULES = ["r2r_ladder_8bit"]
 DLY_EXCLUDED_CELLS = [
     f"gf180mcu_fd_sc_mcu7t5v0__dly{grp}_{drv}" for grp in "abcd" for drv in (1, 2, 4)
 ]
 
 # Metal3 horizontal pin track pitch (GF180MCU 7T)
 M3_PITCH = 0.56
+
+
+@dataclass(frozen=True)
+class _AnalogMacroSpec:
+    cell: str
+    path: str
+    ua_idx: int
+    w: float
+    h: float
+    pin_x: float
+    pin_y: float
 
 
 def _snap_up(val: float, grid: float) -> float:
@@ -61,6 +80,20 @@ def _snap_nearest(val: float, grid: float) -> float:
     return round(round(val / grid) * grid, 2)
 
 
+def _xls_inst_key(name: str) -> list[int | str]:
+    norm = re.sub(r"__(\d+)_inst$", r"[\1]_inst", name)
+    norm = re.sub(r"(?<!\])_inst$", "[0]_inst", norm)
+    return [int(tok) if tok.isdigit() else tok for tok in re.split(r"(\d+)", norm)]
+
+
+def find_adc_macro_instances(verilog_path: Path, core_inst: str) -> list[str]:
+    """Discover XLS #[extern_verilog] `sc_adc_ramp_1ch_4b` instance paths in channel order."""
+    matches = re.findall(
+        r"\bsc_adc_ramp_1ch_4b\s+(\w+)\s*\(", verilog_path.read_text(encoding="utf-8")
+    )
+    return [f"{core_inst}.{inst}.u_r2r" for inst in sorted(matches, key=_xls_inst_key)]
+
+
 def find_dac_macro_instances(verilog_path: Path, core_inst: str) -> list[str]:
     """Discover XLS #[extern_verilog] `sc_r2r_dac_8bit` instance paths in natural channel order."""
     matches = re.findall(
@@ -68,13 +101,40 @@ def find_dac_macro_instances(verilog_path: Path, core_inst: str) -> list[str]:
     )
     if not matches:
         raise RuntimeError(f"No sc_r2r_dac_8bit instances found in {verilog_path}")
+    return [f"{core_inst}.{inst}.u_r2r" for inst in sorted(matches, key=_xls_inst_key)]
 
-    def _key(name: str) -> list[int | str]:
-        norm = re.sub(r"__(\d+)_inst$", r"[\1]_inst", name)
-        norm = re.sub(r"(?<!\])_inst$", "[0]_inst", norm)
-        return [int(tok) if tok.isdigit() else tok for tok in re.split(r"(\d+)", norm)]
 
-    return [f"{core_inst}.{inst}.u_r2r" for inst in sorted(matches, key=_key)]
+def _build_macro_specs(verilog_path: Path, core_inst: str) -> list[_AnalogMacroSpec]:
+    """Return all passive ADC (`ua[0..N_adc-1]`) + DAC (`ua[N_adc..N_total-1]`) macro specs."""
+    adc_paths = find_adc_macro_instances(verilog_path, core_inst=core_inst)
+    dac_paths = find_dac_macro_instances(verilog_path, core_inst=core_inst)
+    specs: list[_AnalogMacroSpec] = []
+    for idx, path in enumerate(adc_paths):
+        specs.append(
+            _AnalogMacroSpec(
+                cell=ADC_CELL_NAME,
+                path=path,
+                ua_idx=idx,
+                w=ADC_MACRO_W,
+                h=ADC_MACRO_H,
+                pin_x=ADC_SUM_IN_PIN_X,
+                pin_y=ADC_SUM_IN_PIN_Y,
+            )
+        )
+    offset = len(adc_paths)
+    for idx, path in enumerate(dac_paths):
+        specs.append(
+            _AnalogMacroSpec(
+                cell=DAC_CELL_NAME,
+                path=path,
+                ua_idx=offset + idx,
+                w=DAC_MACRO_W,
+                h=DAC_MACRO_H,
+                pin_x=DAC_OUT_PIN_X,
+                pin_y=DAC_OUT_PIN_Y,
+            )
+        )
+    return specs
 
 
 def _plan_dac_driver_placements(
@@ -281,42 +341,51 @@ def parse_ishikai_pin_order(pin_order_path: Path, die_h: float) -> dict[int, tup
 def plan_tinytapeout_placements(
     verilog_path: Path,
     def_template_path: Path,
-    core_inst: str = "u_megabytebeat",
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Compute Tiny Tapeout 2x2 bottom-row R-2R macro & clkbuf_20 driver placements."""
-    dac_paths = find_dac_macro_instances(verilog_path, core_inst=core_inst)
-    n_ch = len(dac_paths)
+    core_inst: str = "u_core",
+) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, dict[str, Any]]]:
+    """Compute Tiny Tapeout 2x2 bottom-row ADC+DAC R-2R macro & clkbuf_20 driver placements."""
+    specs = _build_macro_specs(verilog_path, core_inst=core_inst)
     tmpl = parse_tt_def_template(def_template_path)
     ua_pins = tmpl["ua_pins"]
-    for ch in range(n_ch):
-        if ch not in ua_pins:
-            raise RuntimeError(f"ua[{ch}] pin missing from {def_template_path}")
+    for spec in specs:
+        if spec.ua_idx not in ua_pins:
+            raise RuntimeError(f"ua[{spec.ua_idx}] pin missing from {def_template_path}")
 
-    # Uniform pitch with zero stranded stdcell sites between macros (10.08 - 2*4.8 = 0.48 < 0.56)
-    macro_pitch = _snap_up(DAC_MACRO_W + 2.0 * FP_MACRO_HORIZONTAL_HALO, SITE_W)  # 80.08 um
+    # Zero-stranded-site gap between adjacent macros (10.08 - 2*4.8 = 0.48 < 0.56)
+    macro_gap = _snap_up(2.0 * FP_MACRO_HORIZONTAL_HALO, SITE_W)  # 10.08 um
     macro_y = round(tmpl["row_y0"] + ROW_H, 2)  # 7.84 um (ROW_1, clears bottom ua pins)
 
-    # Order channels left-to-right matching ua[0..N-1] physical X order
-    order_ltr = sorted(range(n_ch), key=lambda ch: ua_pins[ch][0])
-    ua_centroid_x = sum(ua_pins[ch][0] for ch in range(n_ch)) / n_ch
-    span_w = (n_ch - 1) * macro_pitch
-    # Center the array's `out` pins (x + DAC_OUT_PIN_X) on the ua pin centroid, clamped clear of
-    # the leftmost VPWR/VGND stripe pair (~22.18 um) + horizontal halo + endcap margin.
+    # Order macros left-to-right matching ua[0..N-1] physical X order
+    ltr_specs = sorted(specs, key=lambda s: ua_pins[s.ua_idx][0])
+    rel_xs: list[float] = []
+    cur_x = 0.0
+    for spec in ltr_specs:
+        rel_xs.append(round(cur_x, 2))
+        cur_x = round(cur_x + spec.w + macro_gap, 2)
+    total_w = round(rel_xs[-1] + ltr_specs[-1].w, 2)
+
+    # Center macro analog pins on ua[k] pins, clamped clear of leftmost VPWR/VGND stripe pair
     min_x = 35.84
     max_right = _snap_down(tmpl["row_x1"] - ENDCAP_W - FP_MACRO_HORIZONTAL_HALO, SITE_W)
-    desired_left = ua_centroid_x - DAC_OUT_PIN_X - 0.5 * span_w
+    desired_left = sum(
+        ua_pins[spec.ua_idx][0] - (rx + spec.pin_x)
+        for spec, rx in zip(ltr_specs, rel_xs, strict=True)
+    ) / len(ltr_specs)
     left_x = max(min_x, _snap_nearest(desired_left, SITE_W))
-    if left_x + span_w + DAC_MACRO_W > max_right + 1e-6:
-        left_x = _snap_down(max_right - span_w - DAC_MACRO_W, SITE_W)
+    if left_x + total_w > max_right + 1e-6:
+        left_x = _snap_down(max_right - total_w, SITE_W)
 
-    dac_coords: list[tuple[float, float]] = [(0.0, macro_y)] * n_ch
-    for slot_idx, ch in enumerate(order_ltr):
-        dac_coords[ch] = (round(left_x + slot_idx * macro_pitch, 2), macro_y)
+    coords_by_path: dict[str, tuple[float, float]] = {}
+    for spec, rx in zip(ltr_specs, rel_xs, strict=True):
+        coords_by_path[spec.path] = (round(left_x + rx, 2), macro_y)
 
-    macro_insts = {
-        path: {"location": [mx, my], "orientation": "N"}
-        for path, (mx, my) in zip(dac_paths, dac_coords, strict=True)
-    }
+    macros_by_cell: dict[str, dict[str, dict[str, Any]]] = {}
+    for spec in specs:
+        mx, my = coords_by_path[spec.path]
+        macros_by_cell.setdefault(spec.cell, {})[spec.path] = {
+            "location": [mx, my],
+            "orientation": "N",
+        }
 
     # Skip macro-boundary row (y = macro_y + 31.36 = 39.20, double-density taps); use 8 normal rows
     first_drv_y = _snap_up(macro_y + DAC_MACRO_H + FP_MACRO_VERTICAL_HALO, ROW_H) + ROW_H
@@ -333,41 +402,41 @@ def plan_tinytapeout_placements(
 
     obstacles = [
         (
-            mx - FP_MACRO_HORIZONTAL_HALO,
-            my - FP_MACRO_VERTICAL_HALO,
-            mx + DAC_MACRO_W + FP_MACRO_HORIZONTAL_HALO,
-            my + DAC_MACRO_H + FP_MACRO_VERTICAL_HALO,
+            coords_by_path[spec.path][0] - FP_MACRO_HORIZONTAL_HALO,
+            coords_by_path[spec.path][1] - FP_MACRO_VERTICAL_HALO,
+            coords_by_path[spec.path][0] + spec.w + FP_MACRO_HORIZONTAL_HALO,
+            coords_by_path[spec.path][1] + spec.h + FP_MACRO_VERTICAL_HALO,
         )
-        for mx, my in dac_coords
+        for spec in specs
     ]
+    dac_specs = [spec for spec in specs if spec.cell == DAC_CELL_NAME]
     drv_placements = _plan_dac_driver_placements(
-        dac_paths,
-        dac_coords,
+        [spec.path for spec in dac_specs],
+        [coords_by_path[spec.path] for spec in dac_specs],
         rows=rows,
         core_x0=core_x0,
         core_x1=core_x1,
         macro_obstacles=obstacles,
     )
-    return macro_insts, drv_placements
+    return macros_by_cell, drv_placements
 
 
 def plan_ishikai_placements(
     verilog_path: Path,
     base_cfg: dict[str, Any],
     pin_order_path: Path,
-    core_inst: str = "u_megabytebeat",
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    """Compute ISHI-KAI 960x960 macro R-2R ladder & clkbuf_20 driver placements from pin_order.cfg."""
-    dac_paths = find_dac_macro_instances(verilog_path, core_inst=core_inst)
-    n_ch = len(dac_paths)
+    core_inst: str = "u_core",
+) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, dict[str, Any]]]:
+    """Compute ISHI-KAI 960x960 macro ADC+DAC R-2R ladder & clkbuf_20 driver placements."""
+    specs = _build_macro_specs(verilog_path, core_inst=core_inst)
 
     die_area = base_cfg["DIE_AREA"]
     core_area = base_cfg["CORE_AREA"]
     die_h = float(die_area[3] - die_area[1])
     ua_pins = parse_ishikai_pin_order(pin_order_path, die_h=die_h)
-    for ch in range(n_ch):
-        if ch not in ua_pins:
-            raise RuntimeError(f"ua[{ch}] not found on #W or #E in {pin_order_path}")
+    for spec in specs:
+        if spec.ua_idx not in ua_pins:
+            raise RuntimeError(f"ua[{spec.ua_idx}] not found on #W or #E in {pin_order_path}")
 
     # Exact OpenROAD core row grid (mirrors IFP-0028 snapping of CORE_AREA)
     row_x0 = _snap_up(float(core_area[0]), SITE_W)  # 30.24
@@ -377,56 +446,60 @@ def plan_ishikai_placements(
     core_x0 = round(row_x0 + ENDCAP_W, 2)  # 31.36
     core_x1 = round(row_x1 - ENDCAP_W, 2)  # 928.48
 
-    # West/East macro X anchors (snapped to 0.56 um site grid, centered under tapcell bays)
-    west_x = round(row_x0 + 30.24, 2)  # 60.48
-    east_x = round(row_x1 - DAC_MACRO_W - 38.64, 2)  # 820.96
-
     # Vertical placement constraints:
     # - snap macro Y to even ROW_H (2 * 3.92 = 7.84 um) for uniform row parity above every ladder
-    # - keep >= 10 rows above bottom core edge and >= 7 clean normal rows + 1 boundary row below top
-    # - enforce >= 20 rows (78.40 um) vertical pitch between stacked ladders on the same side
+    # - keep >= 10 rows above bottom core edge and >= 7 clean rows above top DAC (or 4 above ADC)
     min_my = _snap_up(row_y0 + 10 * ROW_H, 2 * ROW_H)  # 70.56
-    # Top normal row is ROW_227 (row_y1 - 2*ROW_H = 921.20); reserve 1 boundary + 6 normal rows above
-    # macro top + halo (31.36 + 6*3.92 = 54.88 -> macro_y + 54.88 <= 921.20 -> macro_y <= 866.32)
-    max_my = _snap_down(row_y1 - 2 * ROW_H - 14 * ROW_H, 2 * ROW_H)  # 862.40
-    min_v_pitch = round(20 * ROW_H, 2)  # 78.40
+    max_dac_my = _snap_down(row_y1 - 2 * ROW_H - 14 * ROW_H, 2 * ROW_H)  # 862.40
+    max_adc_my = _snap_down(row_y1 - 2 * ROW_H - 8 * ROW_H, 2 * ROW_H)  # 885.92
 
-    dac_coords: list[tuple[float, float]] = [(0.0, 0.0)] * n_ch
-    for side, mx in (("W", west_x), ("E", east_x)):
-        side_chs = sorted(
-            (ch for ch in range(n_ch) if ua_pins[ch][0] == side), key=lambda c: ua_pins[c][1]
+    coords_by_path: dict[str, tuple[float, float]] = {}
+    for side in ("W", "E"):
+        side_specs = sorted(
+            (s for s in specs if ua_pins[s.ua_idx][0] == side),
+            key=lambda s: ua_pins[s.ua_idx][1],
         )
-        if not side_chs:
+        if not side_specs:
             continue
-        ys = [
-            max(min_my, min(max_my, _snap_nearest(ua_pins[ch][1] - DAC_OUT_PIN_Y, 2 * ROW_H)))
-            for ch in side_chs
+        max_ys = [max_dac_my if s.cell == DAC_CELL_NAME else max_adc_my for s in side_specs]
+        pitches = [
+            round((20 if s.cell == DAC_CELL_NAME else 10) * ROW_H, 2) for s in side_specs[:-1]
         ]
-        # Forward pass: enforce minimum pitch going upward
+        ys = [
+            max(min_my, min(max_y, _snap_nearest(ua_pins[s.ua_idx][1] - s.pin_y, 2 * ROW_H)))
+            for s, max_y in zip(side_specs, max_ys, strict=True)
+        ]
+        # Forward pass: enforce minimum vertical pitch going upward
         for i in range(1, len(ys)):
-            if ys[i] < ys[i - 1] + min_v_pitch - 1e-6:
-                ys[i] = round(ys[i - 1] + min_v_pitch, 2)
-        # Backward pass: if top ladder exceeded max_my, pull the stack down cleanly
-        if ys[-1] > max_my + 1e-6:
-            ys[-1] = max_my
+            if ys[i] < ys[i - 1] + pitches[i - 1] - 1e-6:
+                ys[i] = round(ys[i - 1] + pitches[i - 1], 2)
+        # Backward pass: if top ladder exceeded its ceiling, pull the stack down cleanly
+        if ys[-1] > max_ys[-1] + 1e-6:
+            ys[-1] = max_ys[-1]
             for i in range(len(ys) - 2, -1, -1):
-                if ys[i] > ys[i + 1] - min_v_pitch + 1e-6:
-                    ys[i] = round(ys[i + 1] - min_v_pitch, 2)
+                if ys[i] > ys[i + 1] - pitches[i] + 1e-6:
+                    ys[i] = round(ys[i + 1] - pitches[i], 2)
         if ys[0] < min_my - 1e-6:
-            raise RuntimeError(f"Cannot pack {len(side_chs)} ladders on side {side}: {ys}")
-        for ch, my in zip(side_chs, ys, strict=True):
-            dac_coords[ch] = (mx, my)
+            raise RuntimeError(f"Cannot pack {len(side_specs)} ladders on side {side}: {ys}")
+        for s, my in zip(side_specs, ys, strict=True):
+            mx = round(row_x0 + 30.24, 2) if side == "W" else round(row_x1 - s.w - 38.64, 2)
+            coords_by_path[s.path] = (mx, my)
 
-    macro_insts = {
-        path: {"location": [mx, my], "orientation": "N"}
-        for path, (mx, my) in zip(dac_paths, dac_coords, strict=True)
-    }
+    macros_by_cell: dict[str, dict[str, dict[str, Any]]] = {}
+    for spec in specs:
+        mx, my = coords_by_path[spec.path]
+        macros_by_cell.setdefault(spec.cell, {})[spec.path] = {
+            "location": [mx, my],
+            "orientation": "N",
+        }
 
-    # Build tapcell-free driver row list: 6 normal rows directly above each ladder's boundary row
-    # (skipping the macro-boundary row at my + 31.36 where OpenROAD inserts double-density taps).
+    # Build tapcell-free driver row list: 6 normal rows directly above each DAC ladder's boundary
+    # row (skipping the macro-boundary row at my + 31.36 where OpenROAD inserts double-density taps).
+    dac_specs = [spec for spec in specs if spec.cell == DAC_CELL_NAME]
     rows: list[tuple[float, bool, float]] = []
     top_boundary_y = round(row_y1 - ROW_H, 2)  # ROW_228 (925.12, double-density taps)
-    for _, my in dac_coords:
+    for spec in dac_specs:
+        _, my = coords_by_path[spec.path]
         first_drv_y = _snap_up(my + DAC_MACRO_H + FP_MACRO_VERTICAL_HALO, ROW_H) + ROW_H
         for r in range(6):
             ry = round(first_drv_y + r * ROW_H, 2)
@@ -439,22 +512,22 @@ def plan_ishikai_placements(
 
     obstacles = [
         (
-            mx - FP_MACRO_HORIZONTAL_HALO,
-            my - FP_MACRO_VERTICAL_HALO,
-            mx + DAC_MACRO_W + FP_MACRO_HORIZONTAL_HALO,
-            my + DAC_MACRO_H + FP_MACRO_VERTICAL_HALO,
+            coords_by_path[spec.path][0] - FP_MACRO_HORIZONTAL_HALO,
+            coords_by_path[spec.path][1] - FP_MACRO_VERTICAL_HALO,
+            coords_by_path[spec.path][0] + spec.w + FP_MACRO_HORIZONTAL_HALO,
+            coords_by_path[spec.path][1] + spec.h + FP_MACRO_VERTICAL_HALO,
         )
-        for mx, my in dac_coords
+        for spec in specs
     ]
     drv_placements = _plan_dac_driver_placements(
-        dac_paths,
-        dac_coords,
+        [spec.path for spec in dac_specs],
+        [coords_by_path[spec.path] for spec in dac_specs],
         rows=rows,
         core_x0=core_x0,
         core_x1=core_x1,
         macro_obstacles=obstacles,
     )
-    return macro_insts, drv_placements
+    return macros_by_cell, drv_placements
 
 
 def _rewrite_dir_refs(obj: Any, src_dir: Path, dst_dir: Path) -> Any:
@@ -476,7 +549,7 @@ def generate_config(
     base_config_path: Path | None = None,
     def_template_path: Path | None = None,
     pin_order_path: Path | None = None,
-    core_inst: str = "u_megabytebeat",
+    core_inst: str = "u_core",
 ) -> Path:
     """Merge base config with programmatically generated macro & clkbuf_20 driver placements."""
     out_path = out_path.resolve()
@@ -491,7 +564,7 @@ def generate_config(
             object_pairs_hook=lambda pairs: {k: v for k, v in pairs if k != "//"},
         )
         cfg = _rewrite_dir_refs(base_cfg, base_path.parent, out_path.parent)
-        macro_insts, drv_placements = plan_tinytapeout_placements(
+        macros_by_cell, drv_placements = plan_tinytapeout_placements(
             verilog_path=verilog_path,
             def_template_path=def_path,
             core_inst=core_inst,
@@ -501,7 +574,7 @@ def generate_config(
         pin_cfg = (pin_order_path or (ISHIKAI_DIR / "pin_order.cfg")).resolve()
         base_cfg = yaml.safe_load(base_path.read_text(encoding="utf-8"))
         cfg = _rewrite_dir_refs(copy.deepcopy(base_cfg), base_path.parent, out_path.parent)
-        macro_insts, drv_placements = plan_ishikai_placements(
+        macros_by_cell, drv_placements = plan_ishikai_placements(
             verilog_path=verilog_path,
             base_cfg=base_cfg,
             pin_order_path=pin_cfg,
@@ -513,9 +586,13 @@ def generate_config(
     # Inject shared GF180 analog constants and programmatic placements
     cfg["FP_MACRO_HORIZONTAL_HALO"] = FP_MACRO_HORIZONTAL_HALO
     cfg["FP_MACRO_VERTICAL_HALO"] = FP_MACRO_VERTICAL_HALO
-    cfg["IGNORE_DISCONNECTED_MODULES"] = list(IGNORE_DISCONNECTED_MODULES)
+    cfg["IGNORE_DISCONNECTED_MODULES"] = [
+        cell for cell in (DAC_CELL_NAME, ADC_CELL_NAME) if cell in macros_by_cell
+    ]
     cfg["EXTRA_EXCLUDED_CELLS"] = list(DLY_EXCLUDED_CELLS)
-    cfg.setdefault("MACROS", {}).setdefault("r2r_ladder_8bit", {})["instances"] = macro_insts
+    macros_cfg = cfg.setdefault("MACROS", {})
+    for cell_name, insts in macros_by_cell.items():
+        macros_cfg.setdefault(cell_name, {})["instances"] = insts
     cfg["MANUAL_GLOBAL_PLACEMENTS"] = drv_placements
 
     if out_path.suffix == ".json":
@@ -526,12 +603,16 @@ def generate_config(
             encoding="utf-8",
         )
 
+    counts = ", ".join(f"{len(insts)}x {cell}" for cell, insts in macros_by_cell.items())
     print(
         f"[chip] Generated {target} config -> {out_path} "
-        f"({len(macro_insts)}x r2r_ladder_8bit, {len(drv_placements)}x clkbuf_20 drivers)"
+        f"({counts}, {len(drv_placements)}x clkbuf_20 drivers)"
     )
-    for name, info in macro_insts.items():
-        print(f"  macro {name}: loc={info['location']} orient={info['orientation']}")
+    for cell_name, insts in macros_by_cell.items():
+        for name, info in insts.items():
+            print(
+                f"  macro [{cell_name}] {name}: loc={info['location']} orient={info['orientation']}"
+            )
     return out_path
 
 
@@ -547,7 +628,13 @@ def main() -> None:
     ap.add_argument("--base-config", type=Path, default=None)
     ap.add_argument("--def-template", type=Path, default=None)
     ap.add_argument("--pin-order", type=Path, default=None)
-    ap.add_argument("--core-inst", type=str, default="u_megabytebeat")
+    ap.add_argument("--core-inst", type=str, default="u_core")
+    ap.add_argument(
+        "--adc-out-dir",
+        type=Path,
+        default=REPO_ROOT / "gen/adc",
+        help="Output directory for passive r2r_ladder_4bit_sum macro build (default: gen/adc)",
+    )
     ap.add_argument(
         "--dac-out-dir",
         type=Path,
@@ -555,17 +642,14 @@ def main() -> None:
         help="Output directory for passive r2r_ladder_8bit macro build (default: gen/dac)",
     )
     ap.add_argument(
+        "--skip-macros",
         "--skip-dac",
+        dest="skip_macros",
         action="store_true",
-        help="Skip building/verifying passive r2r_ladder_8bit macro and only emit LibreLane config",
+        help="Skip building/verifying passive ADC/DAC macros and only emit LibreLane config",
     )
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
-
-    if not args.skip_dac:
-        import dac
-
-        dac.build_and_verify(out_dir=args.dac_out_dir)
 
     if args.target == "tinytapeout":
         verilog = args.verilog or (SRC_DIR / "megabytebeat.sv")
@@ -573,6 +657,15 @@ def main() -> None:
     else:
         verilog = args.verilog or (SRC_DIR / "megabytebeat.v")
         out = args.out or (REPO_ROOT / "gen/ishikai_config.yaml")
+
+    if not args.skip_macros:
+        if find_adc_macro_instances(verilog, core_inst=args.core_inst):
+            import adc
+
+            adc.build_and_verify(out_dir=args.adc_out_dir)
+        import dac
+
+        dac.build_and_verify(out_dir=args.dac_out_dir)
 
     generate_config(
         target=args.target,

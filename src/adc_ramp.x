@@ -32,7 +32,7 @@ pub fn adc_ramp_1ch(step: u4, adc_in: u4) -> u1 {
 
 // One ramp tick across all 4 channels.
 // When `en` is false (reset or deselected `!ena`), `step_eff` clamps to 4'hF so the
-// `clkinv_4` drivers hold all passive R-2R ladder inputs at 0 V (~0 nA standby).
+// `clkinv_12` drivers hold all passive R-2R ladder inputs at 0 V (~0 nA standby).
 pub fn adc_ramp_step(
     st: AdcState,
     en: bool,
@@ -97,7 +97,7 @@ fn adc_ramp_step_test() {
     assert_eq(last_vld, true);
     assert_eq(last_packed, u16:0xb852);
 
-    // Standby power-gating: en=false forces step_eff=4'hF -> all clkinv_4 outputs 0 V.
+    // Standby power-gating: en=false forces step_eff=4'hF -> all clkinv_12 outputs 0 V.
     let (_, step_off, _, _) = adc_ramp_step(init_st, false, targets);
     assert_eq(step_off, u4:15);
 }

@@ -12,6 +12,8 @@ lint_off -rule BLKANDNBLK -file "*primitives.v"
 // Keep analog macro instances & chip top intact and scope VPI reflection strictly to testbench
 // and passive R-2R macro pins (shrinks GL Vtop__Syms__Slow.cpp from ~27 MB to ~19 KB on 5k cells).
 no_inline -module "tt_um_proppy_megabytebeat"
+no_inline -module "r2r_ladder_4bit_sum"
 no_inline -module "r2r_ladder_8bit"
 public_flat_rw -module "tb" -var "*"
+public_flat_rw -module "r2r_ladder_4bit_sum" -var "*"
 public_flat_rw -module "r2r_ladder_8bit" -var "*"
