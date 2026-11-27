@@ -548,8 +548,24 @@ def main() -> None:
     ap.add_argument("--def-template", type=Path, default=None)
     ap.add_argument("--pin-order", type=Path, default=None)
     ap.add_argument("--core-inst", type=str, default="u_megabytebeat")
+    ap.add_argument(
+        "--dac-out-dir",
+        type=Path,
+        default=REPO_ROOT / "gen/dac",
+        help="Output directory for passive r2r_ladder_8bit macro build (default: gen/dac)",
+    )
+    ap.add_argument(
+        "--skip-dac",
+        action="store_true",
+        help="Skip building/verifying passive r2r_ladder_8bit macro and only emit LibreLane config",
+    )
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
+
+    if not args.skip_dac:
+        import dac
+
+        dac.build_and_verify(out_dir=args.dac_out_dir)
 
     if args.target == "tinytapeout":
         verilog = args.verilog or (SRC_DIR / "megabytebeat.sv")

@@ -66,7 +66,6 @@ jobs:
           PDK_ROOT: ${{ runner.temp }}/pdk
         run: |
           uv run python src/tools.py
-          uv run python src/dac.py --out-dir gen/dac
           curl -fsSL \
             https://raw.githubusercontent.com/TinyTapeout/tt-support-tools/main/tech/gf180mcuD/def/analog/tt_analog_2x2.def \
             -o gen/tt_analog_2x2.def

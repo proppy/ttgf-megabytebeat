@@ -70,12 +70,9 @@ jobs:
       - name: Install Python dependencies
         run: uv sync
 
-      - name: Build & verify passive r2r_ladder_8bit macro
+      - name: Build & verify passive r2r_ladder_8bit macro & generate ISHI-KAI config
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk_analog
-        run: uv run python src/dac.py --out-dir gen/dac
-
-      - name: Generate ISHI-KAI macro LibreLane config (programmatic DAC + driver placements)
         run: |
           uv run python src/chip.py \
             --target ishikai \
@@ -278,19 +275,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          PUSH_MODE="new"
-          OLD_FORK_SHA=""
+          PUSH_ARGS=()
           if git fetch --quiet "$FORK_URL" "refs/heads/${SYNC_BRANCH}"; then
             OLD_FORK_SHA="$(git rev-parse FETCH_HEAD)"
             if git merge-base --is-ancestor HEAD "$OLD_FORK_SHA"; then
-              # Existing fork PR branch is already based on current upstream main:
-              # move HEAD + index to existing PR tip while preserving verified working tree
-              # so the new commit appends cleanly as an independent fast-forward delta.
-              git reset --soft "$OLD_FORK_SHA"
-              git read-tree "$OLD_FORK_SHA"
-              PUSH_MODE="ff"
-            else
-              PUSH_MODE="rebase"
+              # Open PR branch is on current upstream main: append a fast-forward commit.
+              git reset --mixed "$OLD_FORK_SHA"
+            elif ! git merge-base --is-ancestor "$OLD_FORK_SHA" HEAD; then
+              # Fork branch diverged from upstream main (e.g. after squash-merge or upstream commits).
+              PUSH_ARGS=(--force-with-lease="refs/heads/${SYNC_BRANCH}:${OLD_FORK_SHA}")
             fi
           fi
 
@@ -301,19 +294,11 @@ jobs:
           fi
 
           git commit -F "$COMMIT_MSG_FILE"
-
-          if [ "$PUSH_MODE" = "ff" ]; then
-            git push "$FORK_URL" "HEAD:refs/heads/${SYNC_BRANCH}"
-          elif [ "$PUSH_MODE" = "rebase" ]; then
-            git push --force-with-lease="refs/heads/${SYNC_BRANCH}:${OLD_FORK_SHA}" \
-              "$FORK_URL" "HEAD:refs/heads/${SYNC_BRANCH}"
-          else
-            git push "$FORK_URL" "HEAD:refs/heads/${SYNC_BRANCH}"
-          fi
+          git push "${PUSH_ARGS[@]}" "$FORK_URL" "HEAD:refs/heads/${SYNC_BRANCH}"
 
           PR_URL="https://github.com/${UPSTREAM_REPO}/compare/main...${FORK_REPO/\//:}:${SYNC_BRANCH}?expand=1"
           {
-            echo "### ISHI会 Fork Synced (${PUSH_MODE})"
+            echo "### ISHI会 Fork Synced"
             echo ""
             echo "- **Branch**: [\`${FORK_REPO}:${SYNC_BRANCH}\`](https://github.com/${FORK_REPO}/tree/${SYNC_BRANCH})"
             echo "- **One-click PR**: [Open PR to \`${UPSTREAM_REPO}\`](${PR_URL})"

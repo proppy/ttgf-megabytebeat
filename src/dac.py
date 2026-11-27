@@ -855,6 +855,74 @@ def _report_dac_corners(results: list[DacCornerResult], label_prefix: str) -> No
         )
 
 
+def build_and_verify(
+    out_dir: Path | None = None,
+    *,
+    width: int = BITS,
+    l_1r: float = L_1R,
+    l_2r: float = L_2R,
+    w_res: float = W_RES,
+    sum_res: bool = False,
+    name: str | None = None,
+) -> Path:
+    """Build passive R-2R macro, run KLayout DRC/LVS, PVT ngspice, Magic PEX, and render PNG."""
+    tool_checks = tools.check_native_tools(("klayout", "magic"))
+    bad_tools = [c for c in tool_checks if not c.ok]
+    assert not bad_tools, (
+        "Native tool version mismatch vs LibreLane "
+        f"{tools.LIBRELANE_VERSION}: "
+        + ", ".join(f"{c.name}={c.actual} (expected {c.expected})" for c in bad_tools)
+    )
+
+    resolved_dir = out_dir or (
+        REPO_ROOT / "gen/dac" if width == BITS and not sum_res else REPO_ROOT / "gen/r2r"
+    )
+    s, cell, pins = build_r2r(
+        bits=width,
+        l_1r=l_1r,
+        l_2r=l_2r,
+        w=w_res,
+        sum_res=sum_res,
+        name=name,
+    )
+    gds, _, _, spice = analog.emit_macro(s, cell, pins, resolved_dir)
+
+    drc = analog.run_klayout_drc(gds, resolved_dir / "drc")
+    assert drc.clean, f"KLayout DRC failed on {gds}:\n{drc.log}"
+    print(f"  [Analog check | {cell.name}] KLayout DRC clean.")
+
+    lvs = analog.run_klayout_lvs(gds, spice, resolved_dir / "lvs", cell.name, pins=pins)
+    assert lvs.matched, f"KLayout LVS mismatch on {cell.name}:\n{lvs.log}"
+    assert lvs.pins_match, (
+        f"LVS extracted pin mismatch on {cell.name}: "
+        f"extracted={sorted(lvs.ext_pins)} vs expected={sorted(lvs.expected_pins)}"
+    )
+    print(f"  [Analog check | {cell.name}] KLayout LVS (component-graph schematic vs GDS) matched.")
+
+    is_8bit_dac = width == BITS and not sum_res
+    if is_8bit_dac:
+        _report_dac_corners(simulate_dac_corners(spice), label_prefix="DAC check")
+
+    pex = extract_dac_pex(gds, resolved_dir, cell_name=cell.name, bits=width, pins=pins)
+    assert pex.ok, (
+        f"Magic PEX extraction on {cell.name} produced n_res={pex.n_res}, n_cap={pex.n_cap}"
+    )
+    print(
+        f"  [Magic PEX | {cell.name}] Extracted {pex.spice_path} "
+        f"(R={pex.n_res}, C={pex.n_cap}, bleed={pex.n_float_bleed})"
+    )
+    if is_8bit_dac:
+        _report_dac_corners(simulate_dac_corners(pex.spice_path), label_prefix="DAC PEX check")
+
+    png = analog.render_gds(gds, resolved_dir / f"{cell.name}.png", width=1800, height=1200)
+    print(f"[dac] Rendered {png}")
+    print(
+        f"{cell.name}: {cell.info['width']:.2f} x {cell.info['height']:.2f} um "
+        f"({cell.info['area']:.2f} um^2)"
+    )
+    return resolved_dir
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Build & verify passive N-bit R-2R ladder / DAC.")
     ap.add_argument("--width", type=int, default=BITS, help="Ladder bit width (default: 8)")
@@ -901,59 +969,14 @@ def main() -> None:
             print(f"  [SPEF check | {spef.name}] OK: {format_parasitics_summary(res.channels)}")
         return
 
-    tool_checks = tools.check_native_tools(("klayout", "magic"))
-    bad_tools = [c for c in tool_checks if not c.ok]
-    assert not bad_tools, (
-        "Native tool version mismatch vs LibreLane "
-        f"{tools.LIBRELANE_VERSION}: "
-        + ", ".join(f"{c.name}={c.actual} (expected {c.expected})" for c in bad_tools)
-    )
-
-    out_dir = args.out_dir or (
-        REPO_ROOT / "gen/dac" if args.width == BITS and not args.sum_res else REPO_ROOT / "gen/r2r"
-    )
-    s, cell, pins = build_r2r(
-        bits=args.width,
+    build_and_verify(
+        out_dir=args.out_dir,
+        width=args.width,
         l_1r=args.l_1r,
         l_2r=args.l_2r,
-        w=args.w_res,
+        w_res=args.w_res,
         sum_res=args.sum_res,
         name=args.name,
-    )
-    gds, _, _, spice = analog.emit_macro(s, cell, pins, out_dir)
-
-    drc = analog.run_klayout_drc(gds, out_dir / "drc")
-    assert drc.clean, f"KLayout DRC failed on {gds}:\n{drc.log}"
-    print(f"  [Analog check | {cell.name}] KLayout DRC clean.")
-
-    lvs = analog.run_klayout_lvs(gds, spice, out_dir / "lvs", cell.name, pins=pins)
-    assert lvs.matched, f"KLayout LVS mismatch on {cell.name}:\n{lvs.log}"
-    assert lvs.pins_match, (
-        f"LVS extracted pin mismatch on {cell.name}: "
-        f"extracted={sorted(lvs.ext_pins)} vs expected={sorted(lvs.expected_pins)}"
-    )
-    print(f"  [Analog check | {cell.name}] KLayout LVS (component-graph schematic vs GDS) matched.")
-
-    is_8bit_dac = args.width == BITS and not args.sum_res
-    if is_8bit_dac:
-        _report_dac_corners(simulate_dac_corners(spice), label_prefix="DAC check")
-
-    pex = extract_dac_pex(gds, out_dir, cell_name=cell.name, bits=args.width, pins=pins)
-    assert pex.ok, (
-        f"Magic PEX extraction on {cell.name} produced n_res={pex.n_res}, n_cap={pex.n_cap}"
-    )
-    print(
-        f"  [Magic PEX | {cell.name}] Extracted {pex.spice_path} "
-        f"(R={pex.n_res}, C={pex.n_cap}, bleed={pex.n_float_bleed})"
-    )
-    if is_8bit_dac:
-        _report_dac_corners(simulate_dac_corners(pex.spice_path), label_prefix="DAC PEX check")
-
-    png = analog.render_gds(gds, out_dir / f"{cell.name}.png", width=1800, height=1200)
-    print(f"[dac] Rendered {png}")
-    print(
-        f"{cell.name}: {cell.info['width']:.2f} x {cell.info['height']:.2f} um "
-        f"({cell.info['area']:.2f} um^2)"
     )
 
 
