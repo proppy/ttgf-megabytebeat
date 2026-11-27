@@ -268,9 +268,10 @@ jobs:
           FORK_URL="https://x-access-token:${ISHIKAI_FORK_TOKEN}@github.com/${FORK_REPO}.git"
 
           cd upstream_ishikai
-          # Clean LibreLane run artifacts, auto-generated defines, pycache, and cocotb outputs before staging
+          # Clean LibreLane run artifacts, pycache, and cocotb outputs, and restore tracked generated_defines.svh
           git clean -fd chip/cocotb
-          rm -rf chip/librelane/runs chip/src/generated_defines.svh
+          rm -rf chip/librelane/runs
+          git checkout HEAD -- chip/src/generated_defines.svh
           find chip/librelane/plugins -type d -name __pycache__ -exec rm -rf {} +
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
