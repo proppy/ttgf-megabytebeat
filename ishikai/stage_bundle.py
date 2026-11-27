@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -15,10 +16,8 @@ REQUIRED_SRC_FILES = (
     "megabytebeat.ir",
     "megabytebeat.opt.ir",
     "megabytebeat.v",
-    "pwm_audio.v",
     "r2r_ladder_8bit.v",
     "sc_r2r_dac_8bit.v",
-    "tt_um_proppy_megabytebeat.v",
 )
 
 REQUIRED_MACRO_FILES = (
@@ -78,15 +77,25 @@ def _get_antenna_violations(metrics: dict) -> int | None:
 
 
 def rewrite_config_for_ishikai(config_text: str) -> str:
-    """Rewrite dir::../src/*, dir::../gen/*, and dir::megabytebeat_macro.sv for chip/macros/."""
+    """Rewrite dir:: paths (from either ishikai/ or gen/) for chip/macros/megabytebeat/."""
     rewritten = config_text.replace("dir::../src/", "dir::src/")
+    rewritten = rewritten.replace(
+        "dir::../ishikai/megabytebeat_macro.sv", "dir::src/megabytebeat_macro.sv"
+    )
+    rewritten = rewritten.replace("dir::../ishikai/", "dir::")
     rewritten = rewritten.replace("dir::../gen/", "dir::macros/")
+    rewritten = rewritten.replace("dir::dac/", "dir::macros/dac/")
     rewritten = rewritten.replace("dir::megabytebeat_macro.sv", "dir::src/megabytebeat_macro.sv")
     return rewritten
 
 
-def stage_bundle(repo_root: Path, final_dir: Path, out_dir: Path) -> dict:
-    """Copy sources, analog sub-macros, config, pin order, SDC, and final views into bundle."""
+def stage_bundle(
+    repo_root: Path,
+    final_dir: Path,
+    out_dir: Path,
+    config_path: Path | None = None,
+) -> dict:
+    """Copy sources, analog sub-macros, self-contained config, pin order, SDC, and final views."""
     src_dir = repo_root / "src"
     gen_dir = repo_root / "gen"
     ishikai_dir = repo_root / "ishikai"
@@ -119,7 +128,10 @@ def stage_bundle(repo_root: Path, final_dir: Path, out_dir: Path) -> dict:
     shutil.copy2(ishikai_dir / "pdn_cfg.tcl", out_dir / "pdn_cfg.tcl")
     shutil.copy2(ishikai_dir / "pin_order.cfg", out_dir / "pin_order.cfg")
 
-    config_text = (ishikai_dir / "config.yaml").read_text(encoding="utf-8")
+    resolved_cfg = config_path if config_path is not None else (ishikai_dir / "config.yaml")
+    if not resolved_cfg.is_file():
+        raise FileNotFoundError(f"Missing LibreLane config file: {resolved_cfg}")
+    config_text = resolved_cfg.read_text(encoding="utf-8")
     (out_dir / "config.yaml").write_text(
         rewrite_config_for_ishikai(config_text),
         encoding="utf-8",
@@ -142,6 +154,7 @@ def validate_bundle(bundle_dir: Path) -> dict:
     """Verify all views consumed by ISHI-KAI macros_gnss.yaml and check signoff metrics."""
     final_dir = bundle_dir / "final"
     required_files = [
+        bundle_dir / "config.yaml",
         final_dir / "def" / "megabytebeat_macro.def",
         final_dir / "gds" / "megabytebeat_macro.gds",
         final_dir / "lef" / "megabytebeat_macro.lef",
@@ -158,6 +171,20 @@ def validate_bundle(bundle_dir: Path) -> dict:
     missing = [str(p.relative_to(bundle_dir)) for p in required_files if not p.is_file()]
     if missing:
         raise RuntimeError(f"Bundle is missing required views: {', '.join(missing)}")
+
+    # Verify staged config.yaml is self-contained (every dir:: ref exists inside bundle_dir
+    # and programmatic macro + clkbuf_20 placements are baked in).
+    cfg_text = (bundle_dir / "config.yaml").read_text(encoding="utf-8")
+    for token in ("instances:", "MANUAL_GLOBAL_PLACEMENTS:"):
+        if token not in cfg_text:
+            raise RuntimeError(f"Staged bundle config.yaml is missing {token!r}")
+    broken_refs = [
+        rel
+        for rel in re.findall(r"dir::([^\s,'\"\]]+)", cfg_text)
+        if not (bundle_dir / rel).is_file()
+    ]
+    if broken_refs:
+        raise RuntimeError(f"Staged config.yaml has broken dir:: refs: {', '.join(broken_refs)}")
 
     metrics = json.loads((final_dir / "metrics.json").read_text(encoding="utf-8"))
     failures = []
@@ -181,6 +208,36 @@ def validate_bundle(bundle_dir: Path) -> dict:
     return metrics
 
 
+def _format_corner_violation(metrics: dict, metric_prefix: str) -> str:
+    """Format worst-corner violation count alongside nom_tt and violating corner(s)."""
+    worst = metrics.get(metric_prefix)
+    corner_prefix = f"{metric_prefix}__corner:"
+    corner_vals = {
+        key[len(corner_prefix) :]: val
+        for key, val in metrics.items()
+        if key.startswith(corner_prefix) and val is not None
+    }
+    if worst is None and corner_vals:
+        worst = max(corner_vals.values())
+    if worst is None:
+        return "`?`"
+    nom_tt = corner_vals.get("nom_tt_025C_5v00")
+    worst_corners = sorted(c for c, v in corner_vals.items() if v == worst and v > 0)
+    if worst == 0:
+        return "`0` (all corners clean)"
+    details = []
+    if worst_corners:
+        if len(worst_corners) == len(corner_vals) and len(worst_corners) > 1:
+            details.append(f"all {len(worst_corners)} corners")
+        else:
+            details.append(f"worst: {', '.join(worst_corners)}")
+    if nom_tt is not None:
+        details.append(f"nom_tt: {nom_tt}")
+    if details:
+        return f"`{worst}` ({'; '.join(details)})"
+    return f"`{worst}`"
+
+
 def format_summary(metrics: dict) -> str:
     """Render a compact Markdown summary of macro signoff metrics."""
     util_pct = float(metrics.get("design__instance__utilization", 0.0)) * 100.0
@@ -188,6 +245,8 @@ def format_summary(metrics: dict) -> str:
     setup_ws = metrics.get("timing__setup__ws", "?")
     hold_ws = metrics.get("timing__hold__ws", "?")
     antenna_val = _get_antenna_violations(metrics)
+    slew_str = _format_corner_violation(metrics, "design__max_slew_violation__count")
+    cap_str = _format_corner_violation(metrics, "design__max_cap_violation__count")
     lines = [
         "### ISHI会 `megabytebeat_macro` Signoff Summary",
         "",
@@ -199,6 +258,8 @@ def format_summary(metrics: dict) -> str:
         f"| KLayout XOR / Netgen LVS | `{metrics.get('design__xor_difference__count')}` / `{metrics.get('design__lvs_error__count')}` |",
         f"| Antenna / Route DRC | `{antenna_val}` / `{metrics.get('route__drc_errors')}` |",
         f"| STA Setup WS / Hold WS | `{setup_ws}` ns / `{hold_ws}` ns |",
+        f"| Max Slew Violations (worst corner) | {slew_str} |",
+        f"| Max Cap Violations (worst corner) | {cap_str} |",
         "",
     ]
     return "\n".join(lines)
@@ -209,10 +270,16 @@ def main() -> None:
     parser.add_argument("--repo-root", type=Path, required=True)
     parser.add_argument("--final-dir", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--config", type=Path, default=None)
     parser.add_argument("--summary-file", type=Path, default=None)
     args = parser.parse_args()
 
-    metrics = stage_bundle(args.repo_root, args.final_dir, args.out_dir)
+    metrics = stage_bundle(
+        args.repo_root,
+        args.final_dir,
+        args.out_dir,
+        config_path=args.config,
+    )
     summary = format_summary(metrics)
     print(summary)
     if args.summary_file is not None:
