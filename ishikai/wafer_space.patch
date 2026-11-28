@@ -1,5 +1,5 @@
 diff --git a/chip/cocotb/chip_top_tb.py b/chip/cocotb/chip_top_tb.py
-index af7c0fe..bcdba09 100644
+index af7c0fe..b6173b4 100644
 --- a/chip/cocotb/chip_top_tb.py
 +++ b/chip/cocotb/chip_top_tb.py
 @@ -2,18 +2,21 @@
@@ -12,10 +12,10 @@ index af7c0fe..bcdba09 100644
 -#   2. megabytebeat bb_ena=0 quiet-by-default clamping (all 5 PWM outputs == 0 while bb_clk runs).
 -#   3. megabytebeat bb_ena=1 bit-exact 5-track PWM verification against upstream DSLX formulas.
 -#   4. megabytebeat bb_ena 1->0->1 synchronous flush + clean restart from t=0.
-+#   2. megabytebeat bb_ena=0 quiet-by-default clamping (all 5 R-2R DACs == 0x00 and bb_ua_PAD == 0).
-+#   3. megabytebeat bb_ena=1 bit-exact 5-track 8-bit R-2R DAC verification at 32.768 kHz (/4 = 8.192 kHz)
-+#      (both external bb_ua_PAD[4:0] connectivity and internal 8-bit ladder codes).
-+#   4. megabytebeat bb_ena 1->0 clean disable & DAC clamping.
++#   2. megabytebeat bb_ena=0 quiet clamping (all 4 ADC & 2 DAC ladders == 0 V, bb_ua_PAD[5:4] == 0).
++#   3. megabytebeat bb_ena=1 live 4x ramp ADC digitization on bb_ua_PAD[3:0] -> bit-exact
++#      2x selectable 8-bit R-2R DAC on bb_ua_PAD[5:4] at 32.768 kHz (/4 = 8.192 kHz audio).
++#   4. megabytebeat bb_ena 1->0 clean disable & ADC/DAC clamping.
  
  import os
 +import re
@@ -38,26 +38,26 @@ index af7c0fe..bcdba09 100644
      """Exact golden formulas from proppy/ttgf-megabytebeat src/bytebeat.x."""
      t32 = t & 0xFFFFFFFF
      ab = ((b & 0xF) << 4) | (a & 0xF)
-@@ -52,16 +55,67 @@ def bytebeat_golden(t: int, a: int, b: int, c: int, d: int):
+@@ -52,16 +55,79 @@ def bytebeat_golden(t: int, a: int, b: int, c: int, d: int):
      # Track 3: a tune to share
      s3 = (t32 * ((t32 >> a) | (t32 >> b)) & cd) & 0xFF
  
 -    # Track 7 (uo_pwm[4]): sierpinski harmony
-+    # Track 7 (ua[4]): sierpinski harmony
++    # Track 4 (sierpinski harmony)
      s7 = (((t32 * a) & (t32 >> b)) | ((t32 * c) & (t32 >> d))) & 0xFF
  
      return [s0, s1, s2, s3, s7]
  
  
-+def _dac_inst_sort_key(path: str) -> tuple[int, str]:
-+    m = re.search(r"call(?:__(\d+))?_inst", path)
++def _xls_inst_sort_key(path: str) -> tuple[int, str]:
++    m = re.search(r"(?:call|cmp_hi)(?:__(\d+))?_inst", path)
 +    if m:
 +        return (int(m.group(1)) if m.group(1) else 0, path)
 +    return (999, path)
 +
 +
-+def _find_r2r_ladders(root) -> list[dict]:
-+    """Locate all 5 passive 8-bit `r2r_ladder_8bit` instances in RTL or GL hierarchy."""
++def _find_r2r_ladders(root, width: int) -> list[dict]:
++    """Locate all passive R-2R macro instances of bit width `width` in RTL or GL hierarchy."""
 +    found: list[tuple[str, dict]] = []
 +
 +    def walk(obj, prefix: str = "") -> None:
@@ -71,7 +71,7 @@ index af7c0fe..bcdba09 100644
 +        full = f"{prefix}.{name}" if prefix else name
 +        if name == "u_r2r" or name.endswith(".u_r2r"):
 +            children = {c._name.strip(): c for c in obj}
-+            if "in" in children and "term" in children and len(children["in"]) == 8:
++            if "in" in children and "term" in children and len(children["in"]) == width:
 +                found.append((full, children))
 +            return
 +        for sub in obj:
@@ -79,16 +79,28 @@ index af7c0fe..bcdba09 100644
 +                walk(sub, full)
 +
 +    walk(root)
-+    found.sort(key=lambda item: _dac_inst_sort_key(item[0]))
++    found.sort(key=lambda item: _xls_inst_sort_key(item[0]))
 +    return [pins for _, pins in found]
 +
 +
-+def _read_dac_codes(ladders: list[dict]) -> list[int]:
++def _read_ladder_codes(ladders: list[dict]) -> list[int]:
 +    codes = []
 +    for pins in ladders:
 +        assert int(pins["term"].value) == 0, f"Expected R-2R term=0, got {pins['term'].value}"
 +        codes.append(int(pins["in"].value))
 +    return codes
++
++
++def _drive_adc_pads(dut, adc_ladders: list[dict], targets: list[int]) -> None:
++    """Drive external comparator outputs on bb_ua_PAD[3:0] without disturbing bb_ua_PAD[5:4]."""
++    for ch in range(4):
++        in_val = int(adc_ladders[ch]["in"].value)
++        step = (~in_val) & 0xF
++        dut.bb_ua_PAD[ch].value = 1 if targets[ch] > step else 0
++
++
++def _read_dac_pad_msbs(dut) -> int:
++    return (int(dut.bb_ua_PAD[5].value) << 1) | int(dut.bb_ua_PAD[4].value)
 +
 +
  async def init_chip(dut):
@@ -109,31 +121,45 @@ index af7c0fe..bcdba09 100644
              if hasattr(dut, p):
                  getattr(dut, p).value = v
  
-@@ -104,9 +158,12 @@ async def spi_transfer(dut, tx_word: int) -> int:
+@@ -72,8 +138,9 @@ async def init_chip(dut):
+     dut.bb_clk_PAD.value = 0
+     dut.bb_rst_n_PAD.value = 0
+     dut.bb_ena_PAD.value = 0
+-    dut.bb_ui_PAD.value = 0
+     dut.bb_uio_PAD.value = 0
++    for ch in range(4):
++        dut.bb_ua_PAD[ch].value = 0
+ 
+     await Timer(500, unit="ns")
+     dut.rst_n_PAD.value = 1
+@@ -104,9 +171,14 @@ async def spi_transfer(dut, tx_word: int) -> int:
  
  @cocotb.test()
  async def test_gnss_spi_and_megabytebeat(dut):
 -    """Verify GNSS SPI + megabytebeat bb_ena gating + 5-track bit-exact PWM."""
-+    """Verify GNSS SPI + megabytebeat bb_ena gating + 5-track 8-bit R-2R DACs at 32.768 kHz."""
++    """Verify GNSS SPI + megabytebeat bb_ena gating + 4x ramp ADC + 2x R-2R DAC at 32.768 kHz."""
      await init_chip(dut)
  
-+    ladders = _find_r2r_ladders(dut)
-+    assert len(ladders) == 5, f"Expected 5 r2r_ladder_8bit instances, found {len(ladders)}"
++    adc_ladders = _find_r2r_ladders(dut, width=4)
++    dac_ladders = _find_r2r_ladders(dut, width=8)
++    assert len(adc_ladders) == 4, f"Expected 4 r2r_ladder_4bit_sum, found {len(adc_ladders)}"
++    assert len(dac_ladders) == 2, f"Expected 2 r2r_ladder_8bit, found {len(dac_ladders)}"
 +
      # ------------------------------------------------------------ 1. GNSS SPI test
      # First frame reads back reset default {ID=5'b10101, ctl=19'h08000} = 0xA88000
      w1 = 0x05A3C5  # ctl = 19'h5A3C5
-@@ -121,21 +178,26 @@ async def test_gnss_spi_and_megabytebeat(dut):
+@@ -121,21 +193,27 @@ async def test_gnss_spi_and_megabytebeat(dut):
      cocotb.log.info(f"GNSS SPI PASS: reset=0x{rd0:06X}, frame1=0x{rd1:06X}")
  
      # ------------------------------------------------------------ 2. megabytebeat bb_ena=0 test
 -    bb_clk = Clock(dut.bb_clk_PAD, 488, unit="ns")  # ~2.048 MHz
-+    bb_clk = Clock(dut.bb_clk_PAD, 30518, unit="ns")  # ~32.768 kHz (/4 = 8.192 kHz DAC rate)
++    bb_clk = Clock(dut.bb_clk_PAD, 30518, unit="ns")  # ~32.768 kHz (1:1 ADC tick, /4 audio)
      cocotb.start_soon(bb_clk.start())
  
-     # Set active params (a=0xa, b=0x2, c=0xa, d=0x0) while bb_ena=0
-     dut.bb_ui_PAD.value = 0x2A
-     dut.bb_uio_PAD.value = 0x0A
+-    # Set active params (a=0xa, b=0x2, c=0xa, d=0x0) while bb_ena=0
+-    dut.bb_ui_PAD.value = 0x2A
+-    dut.bb_uio_PAD.value = 0x0A
++    dut.bb_uio_PAD.value = (1 << 3) | 0  # dac0=track0, dac1=track1
      dut.bb_ena_PAD.value = 0
 -    await ClockCycles(dut.bb_clk_PAD, 300)
 -    for _ in range(32):
@@ -146,69 +172,90 @@ index af7c0fe..bcdba09 100644
 -
 -    # ------------------------------------------------------------ 3. megabytebeat bb_ena=1 5-track test
 +        await Timer(100, unit="ns")
-+        assert int(dut.bb_ua_PAD.value) == 0, (
-+            f"Expected DAC=0 with bb_ena=0, got {dut.bb_ua_PAD.value}"
++        assert _read_dac_pad_msbs(dut) == 0, (
++            f"Expected DAC pads=0 with bb_ena=0, got {dut.bb_ua_PAD.value}"
 +        )
-+        assert _read_dac_codes(ladders) == [0, 0, 0, 0, 0], (
-+            f"Expected clamped R-2R codes [0..0] with bb_ena=0, got {_read_dac_codes(ladders)}"
++        assert _read_ladder_codes(adc_ladders) == [0, 0, 0, 0], (
++            f"Expected clamped ADC ladders [0..0], got {_read_ladder_codes(adc_ladders)}"
 +        )
-+    cocotb.log.info("megabytebeat bb_ena=0 quiet DAC clamping PASS")
++        assert _read_ladder_codes(dac_ladders) == [0, 0], (
++            f"Expected clamped DAC ladders [0,0], got {_read_ladder_codes(dac_ladders)}"
++        )
++    cocotb.log.info("megabytebeat bb_ena=0 quiet 4x ADC + 2x DAC clamping PASS")
 +
-+    # ------------------------------------------------------------ 3. megabytebeat bb_ena=1 5-DAC test
++    # ------------------------------------------------------------ 3. megabytebeat bb_ena=1 test
      # Enable on falling edge so first posedge sees clean ena=1, rst_n=1
      await FallingEdge(dut.bb_clk_PAD)
      dut.bb_rst_n_PAD.value = 0
-@@ -144,42 +206,58 @@ async def test_gnss_spi_and_megabytebeat(dut):
+@@ -143,43 +221,75 @@ async def test_gnss_spi_and_megabytebeat(dut):
+     await ClockCycles(dut.bb_clk_PAD, 4)
      await FallingEdge(dut.bb_clk_PAD)
      dut.bb_rst_n_PAD.value = 1
++    await Timer(100, unit="ns")
  
 -    # Test with params a=0x5, b=0x2, c=0x3, d=0x1 (all 5 tracks produce distinct non-zero samples!)
-+    # Test with params a=0x5, b=0x2, c=0x3, d=0x1 (all 5 tracks produce distinct non-zero samples)
-     a, b, c, d = 0x5, 0x2, 0x3, 0x1
-     dut.bb_ui_PAD.value = (b << 4) | a
-     dut.bb_uio_PAD.value = (d << 4) | c
+-    a, b, c, d = 0x5, 0x2, 0x3, 0x1
+-    dut.bb_ui_PAD.value = (b << 4) | a
+-    dut.bb_uio_PAD.value = (d << 4) | c
++    # Inject analog CV params a=0x5, b=0x2, c=0x3, d=0x1 via external bb_ua_PAD[3:0]
++    cv_targets = [0x5, 0x2, 0x3, 0x1]
++    init_params = (0xA, 0x2, 0xA, 0x0)  # initial State.params 0x0a2a before first 16-step sweep
  
 -    # Over each 256-cycle frame (starting immediately after reset deassertion on falling edge,
 -    # sampling after each posedge when pwm updates for count=0..255), high-cycle count == sample(t)!
-+    # 4 clocks per frame (32.768 kHz / 4 = 8.192 kHz): sample holds steady on cycles 0..2
-+    # and advances on cycle 3 when sample_rdy = (clk_div == 2'd3).
++    # 4 clocks per audio frame (32.768 kHz / 4 = 8.192 kHz):
++    #   - Frame 0 holds initial State.pcm = [0..0]
++    #   - Frames 1..3 hold samples(frame-1, init_params)
++    #   - Tick 15 (end of Frame 3) latches cv_targets, taking effect on Frame 4..11
++    #   - Test DAC track selection: frames 0..6 -> (trk2, trk1); frames 7..11 -> (trk3, trk4)
      mismatches = 0
-     for t_idx in range(12):
+-    for t_idx in range(12):
 -        counts = [0, 0, 0, 0, 0]
 -        for _ in range(256):
--            await RisingEdge(dut.bb_clk_PAD)
++    for frame_idx in range(12):
++        dac0_sel, dac1_sel = (2, 1) if frame_idx < 7 else (3, 4)
++        dut.bb_uio_PAD.value = (dac1_sel << 3) | dac0_sel
++        if frame_idx == 0:
++            exp = [0, 0, 0, 0, 0]
++        else:
++            params = tuple(cv_targets) if frame_idx >= 4 else init_params
++            exp = bytebeat_golden(frame_idx - 1, *params)
++        exp_dac = [exp[dac0_sel], exp[dac1_sel]]
++        exp_msb = (((exp_dac[1] >> 7) & 1) << 1) | ((exp_dac[0] >> 7) & 1)
++
++        dac_codes = None
++        dac_pad_msbs = None
++        frame_ok = True
++        for cyc in range(4):
++            _drive_adc_pads(dut, adc_ladders, cv_targets)
++            await Timer(100, unit="ns")
++            cur_codes = _read_ladder_codes(dac_ladders)
++            cur_msb = _read_dac_pad_msbs(dut)
++            if cyc == 1:
++                dac_codes = cur_codes
++                dac_pad_msbs = cur_msb
++            if cur_codes != exp_dac or cur_msb != exp_msb:
++                frame_ok = False
+             await RisingEdge(dut.bb_clk_PAD)
 -            await Timer(20, unit="ns")
 -            val = int(dut.bb_uo_PAD.value)
 -            for ch in range(5):
 -                counts[ch] += (val >> ch) & 1
-         exp = bytebeat_golden(t_idx, a, b, c, d)
+-        exp = bytebeat_golden(t_idx, a, b, c, d)
 -        cocotb.log.info(f"t={t_idx}: got={counts}, expected={exp}")
 -        if counts != exp:
-+        exp_ua_msb = sum(((exp[ch] >> 7) & 1) << ch for ch in range(5))
-+        dac_codes = None
-+        ua_pad_val = None
-+        frame_ok = True
-+        for cyc in range(4):
-+            await RisingEdge(dut.bb_clk_PAD)
 +            await Timer(100, unit="ns")
-+            if cyc < 3:
-+                cur_codes = _read_dac_codes(ladders)
-+                cur_ua = int(dut.bb_ua_PAD.value)
-+                if cyc == 1:
-+                    dac_codes = cur_codes
-+                    ua_pad_val = cur_ua
-+                if cur_codes != exp or cur_ua != exp_ua_msb:
-+                    frame_ok = False
++
 +        cocotb.log.info(
-+            f"t={t_idx}: dac={dac_codes} (exp={exp}), "
-+            f"ua_pad=0x{ua_pad_val:02x} (exp_msb=0x{exp_ua_msb:02x})"
++            f"frame={frame_idx}: dac={dac_codes} (exp={exp_dac}), "
++            f"ua[5:4]={dac_pad_msbs:02b} (exp={exp_msb:02b})"
 +        )
 +        if not frame_ok:
              mismatches += 1
 -    assert mismatches == 0, f"megabytebeat PWM mismatches: {mismatches}"
 -    cocotb.log.info("megabytebeat 5-track bit-exact PWM PASS (t=0..11)")
-+    assert mismatches == 0, f"megabytebeat 5-DAC mismatches: {mismatches}"
-+    cocotb.log.info("megabytebeat 5x 8-bit R-2R DAC bit-exact PASS (t=0..11, 32.768 kHz /4)")
++    assert mismatches == 0, f"megabytebeat ADC/DAC mismatches: {mismatches}"
++    cocotb.log.info("megabytebeat 4x ADC + 2x selectable R-2R DAC bit-exact PASS (32.768 kHz)")
  
      # ------------------------------------------------------------ 4. bb_ena 1 -> 0 disable check
      await FallingEdge(dut.bb_clk_PAD)
@@ -219,13 +266,16 @@ index af7c0fe..bcdba09 100644
 -    cocotb.log.info("megabytebeat bb_ena 1->0 disable PASS")
 +    await ClockCycles(dut.bb_clk_PAD, 4)
 +    await Timer(100, unit="ns")
-+    assert int(dut.bb_ua_PAD.value) == 0, (
-+        f"Expected DAC=0 after bb_ena=0, got {dut.bb_ua_PAD.value}"
++    assert _read_dac_pad_msbs(dut) == 0, (
++        f"Expected DAC pads=0 after bb_ena=0, got {dut.bb_ua_PAD.value}"
 +    )
-+    assert _read_dac_codes(ladders) == [0, 0, 0, 0, 0], (
-+        f"Expected clamped DAC codes [0..0] after bb_ena=0, got {_read_dac_codes(ladders)}"
++    assert _read_ladder_codes(adc_ladders) == [0, 0, 0, 0], (
++        f"Expected clamped ADC ladders after bb_ena=0, got {_read_ladder_codes(adc_ladders)}"
 +    )
-+    cocotb.log.info("megabytebeat bb_ena 1->0 disable + DAC clamp PASS")
++    assert _read_ladder_codes(dac_ladders) == [0, 0], (
++        f"Expected clamped DAC ladders after bb_ena=0, got {_read_ladder_codes(dac_ladders)}"
++    )
++    cocotb.log.info("megabytebeat bb_ena 1->0 disable + ADC/DAC clamp PASS")
  
  
  def chip_top_runner():
@@ -236,7 +286,7 @@ index af7c0fe..bcdba09 100644
      includes = [proj_path / "../src/"]
  
      defines[f"PDK_{pdk.replace('-', '_')}"] = True
-@@ -188,18 +266,30 @@ def chip_top_runner():
+@@ -188,18 +298,33 @@ def chip_top_runner():
      defines[f"SRAM_{sram}"] = True
  
      if gl:
@@ -253,6 +303,7 @@ index af7c0fe..bcdba09 100644
 +            )
          sources.append(Path(pdk_root) / pdk / "libs.ref" / scl / "verilog" / f"{scl}.v")
          sources.append(Path(pdk_root) / pdk / "libs.ref" / scl / "verilog" / "primitives.v")
++        sources.append(proj_path / "../macros/megabytebeat/src/r2r_ladder_4bit_sum.v")
 +        sources.append(proj_path / "../macros/megabytebeat/src/r2r_ladder_8bit.v")
          sources.append(proj_path / "../macros/megabytebeat/final/pnl/megabytebeat_macro.pnl.v")
 -        sources.append(proj_path / f"../final/pnl/{hdl_toplevel}.pnl.v")
@@ -262,7 +313,9 @@ index af7c0fe..bcdba09 100644
          sources += [
              proj_path / "../src/chip_top.sv",
              proj_path / "../src/chip_core.sv",
++            proj_path / "../macros/megabytebeat/src/r2r_ladder_4bit_sum.v",
 +            proj_path / "../macros/megabytebeat/src/r2r_ladder_8bit.v",
++            proj_path / "../macros/megabytebeat/src/sc_adc_ramp_1ch_4b.v",
 +            proj_path / "../macros/megabytebeat/src/sc_r2r_dac_8bit.v",
              proj_path / "../macros/megabytebeat/src/megabytebeat.v",
 -            proj_path / "../macros/megabytebeat/src/pwm_audio.v",
@@ -270,7 +323,7 @@ index af7c0fe..bcdba09 100644
              proj_path / "../macros/megabytebeat/src/megabytebeat_macro.sv",
          ]
  
-@@ -214,7 +304,9 @@ def chip_top_runner():
+@@ -214,7 +339,9 @@ def chip_top_runner():
          proj_path / "../ip/gf180mcu_ws_ip__project_id/vh/gf180mcu_ws_ip__project_id.v",
      ]
  
@@ -282,7 +335,7 @@ index af7c0fe..bcdba09 100644
      runner.build(
          sources=sources,
 diff --git a/chip/librelane/chip_top.sdc b/chip/librelane/chip_top.sdc
-index 8c2b8bd..816ba83 100644
+index 8c2b8bd..0b690f7 100644
 --- a/chip/librelane/chip_top.sdc
 +++ b/chip/librelane/chip_top.sdc
 @@ -62,18 +62,22 @@ set clk_core_input_ports [get_ports {
@@ -299,8 +352,9 @@ index 8c2b8bd..816ba83 100644
 +    create_clock $bb_clk_pins -name bb_clk -period 30517.5
      set_clock_groups -asynchronous -group [get_clocks $clock_port] -group [get_clocks bb_clk]
  
-     set bb_in_ports [get_ports {bb_rst_n_PAD bb_ena_PAD bb_ui_PAD[*] bb_uio_PAD[*]}]
+-    set bb_in_ports [get_ports {bb_rst_n_PAD bb_ena_PAD bb_ui_PAD[*] bb_uio_PAD[*]}]
 -    set bb_out_ports [get_ports {bb_uo_PAD[*]}]
++    set bb_in_ports [get_ports {bb_rst_n_PAD bb_ena_PAD bb_uio_PAD[*]}]
      set_input_delay -min 5.0 -clock [get_clocks bb_clk] $bb_in_ports
 -    set_input_delay -max 97.6 -clock [get_clocks bb_clk] $bb_in_ports
 -    set_output_delay 97.6 -clock [get_clocks bb_clk] $bb_out_ports
@@ -315,29 +369,42 @@ index 8c2b8bd..816ba83 100644
      set_clock_uncertainty $::env(CLOCK_UNCERTAINTY_CONSTRAINT) [get_clocks bb_clk]
      set_clock_transition $::env(CLOCK_TRANSITION_CONSTRAINT) [get_clocks bb_clk]
 diff --git a/chip/librelane/pad_cfg.tcl b/chip/librelane/pad_cfg.tcl
-index 466913e..e8db70a 100644
+index 466913e..eec1415 100644
 --- a/chip/librelane/pad_cfg.tcl
 +++ b/chip/librelane/pad_cfg.tcl
+@@ -195,7 +195,7 @@ if { [set afe [$block findInst afe_rf_pad]] != "NULL" } {
+ #     VDD_BB while keeping shared VSS/DVSS continuous.
+ #   * sup_vdd_* (fill10_supplyVDD): tap VDD_BB out on Metal5 (9 um wide) into megabytebeat_macro.
+ if { [set brk_e_inst [$block findInst brk_vdd_e]] != "NULL" } {
+-    set ref_e [$block findInst {bb_uio_pads\[7\].pad}]
++    set ref_e [$block findInst {nc_bb\[4\].pad}]
+     set bb_e [$ref_e getBBox]
+     set loc_e [round_um_nm [expr double([$bb_e yMax]) / $units + 34.0]]
+     puts "\[INFO\] Placing VDD domain break brk_vdd_e (fill10_noVDD) on IO_EAST at $loc_e"
 @@ -209,7 +209,7 @@ if { [set brk_w_inst [$block findInst brk_vdd_w]] != "NULL" } {
      place_pad -row IO_WEST -location $loc_w brk_vdd_w -master [[$brk_w_inst getMaster] getName]
  }
  if { [set e0 [$block findInst sup_vdd_e0]] != "NULL" } {
 -    set ref_e0 [$block findInst {bb_uo_pads\[4\].pad}]
-+    set ref_e0 [$block findInst {bb_ua_pads\[4\].pad}]
++    set ref_e0 [$block findInst {bb_ua_pads\[5\].pad}]
      set ref_e1 [$block findInst {dvdd_bb_pads\[1\].pad}]
      set loc_e0 [round_um_nm [expr double([[$ref_e0 getBBox] yMax]) / $units + 27.0]]
      set loc_e1 [round_um_nm [expr double([[$ref_e1 getBBox] yMin]) / $units - 57.0]]
-@@ -222,7 +222,7 @@ if { [set e0 [$block findInst sup_vdd_e0]] != "NULL" } {
+@@ -220,9 +220,9 @@ if { [set e0 [$block findInst sup_vdd_e0]] != "NULL" } {
+     place_pad -row IO_EAST -location $loc_e2 sup_vdd_e2 -master [[[$block findInst sup_vdd_e2] getMaster] getName]
+ }
  if { [set w0 [$block findInst sup_vdd_w0]] != "NULL" } {
-     set ref_w0 [$block findInst {bb_ui_pads\[1\].pad}]
-     set ref_w1 [$block findInst {bb_ui_pads\[2\].pad}]
+-    set ref_w0 [$block findInst {bb_ui_pads\[1\].pad}]
+-    set ref_w1 [$block findInst {bb_ui_pads\[2\].pad}]
 -    set ref_w2 [$block findInst {bb_ui_pads\[4\].pad}]
-+    set ref_w2 [$block findInst {bb_ua_pads\[0\].pad}]
++    set ref_w0 [$block findInst {nc_bb\[6\].pad}]
++    set ref_w1 [$block findInst {bb_ua_pads\[0\].pad}]
++    set ref_w2 [$block findInst {bb_ua_pads\[2\].pad}]
      set loc_w0 [round_um_nm [expr double([[$ref_w0 getBBox] yMax]) / $units + 13.0]]
      set loc_w1 [round_um_nm [expr double([[$ref_w1 getBBox] yMax]) / $units + 10.0]]
      set loc_w2 [round_um_nm [expr double([[$ref_w2 getBBox] yMax]) / $units + 40.0]]
 diff --git a/chip/librelane/plugins/librelane_plugin_gnss/analog_straps.py b/chip/librelane/plugins/librelane_plugin_gnss/analog_straps.py
-index 8a5e59c..f2d8f9e 100644
+index 8a5e59c..de0cc6f 100644
 --- a/chip/librelane/plugins/librelane_plugin_gnss/analog_straps.py
 +++ b/chip/librelane/plugins/librelane_plugin_gnss/analog_straps.py
 @@ -7,6 +7,7 @@
@@ -419,7 +486,7 @@ index 8a5e59c..f2d8f9e 100644
 +            hw, w_rem = w // 2, w - w // 2
 +            pad_x = p.xMax() if side == "W" else p.xMin()
 +            mac_x = mbb.xMin() if side == "W" else mbb.xMax()
-+            x_trunk = pad_x + um(16.0 + 12.0 * idx) if side == "W" else pad_x - um(16.0 + 12.0 * idx)
++            x_trunk = pad_x + um(16.0 + 10.0 * idx) if side == "W" else pad_x - um(16.0 + 10.0 * idx)
 +            x_jog = mac_x - um(4.0) if side == "W" else mac_x + um(4.0)
 +
 +            dy_um = abs((inst.getBBox().yMin() + inst.getBBox().yMax()) // 2 - qy_c) / dbu
@@ -474,13 +541,13 @@ index 8a5e59c..f2d8f9e 100644
  
  if __name__ == "__main__":
 diff --git a/chip/librelane/slots/slot_0p5x1.yaml b/chip/librelane/slots/slot_0p5x1.yaml
-index 70b99f4..b22bdc6 100644
+index 70b99f4..34baaf6 100644
 --- a/chip/librelane/slots/slot_0p5x1.yaml
 +++ b/chip/librelane/slots/slot_0p5x1.yaml
 @@ -1,5 +1,5 @@
  # Floorplanning — Wafer.Space slot 0p5x1 (1936 x 5122 um)
 -# Dual-VDD GNSS AFE (north) + proppy/ttgf-megabytebeat (south)
-+# Dual-VDD GNSS AFE (north) + proppy/ttgf-megabytebeat 5x 8-bit R-2R DAC (south)
++# Dual-VDD GNSS AFE (north) + proppy/ttgf-megabytebeat 4x ADC + 2x DAC (south)
  FP_SIZING: absolute
  DIE_AREA: [0, 0, 1936, 5122]
  CORE_AREA: [442, 442, 1494, 4680]
@@ -507,48 +574,67 @@ index 70b99f4..b22bdc6 100644
  
  # East (south -> north, 28 pads):
 -#   0..11:  VDD_BB domain (BB_UO3, BB_UO7, DVSS, DVDD_BB, BB_UIO[0..7])
-+#   0..11:  VDD_BB domain (BB_UA3, BB_UA4, DVSS, DVDD_BB, BB_UIO[0..7])
++#   0..11:  VDD_BB domain (BB_UA4..5 DAC0..1, DVSS, DVDD_BB, BB_UIO[0..5], nc_bb[3..4])
  #   [brk_vdd_e = fill10_noVDD placed in gap between pad 11 and pad 12]
  #   12..27: GNSS VDD domain (I_SIGN, DVSS, DVDD, I_MAG, Q_SIGN, Q_MAG, CLKOUT, nc[0..4], DVSS, DVDD, nc[5..6])
  PAD_EAST: [
 -    "bb_uo_pads\\[3\\].pad",
 -    "bb_uo_pads\\[4\\].pad",
-+    "bb_ua_pads\\[3\\].pad",
 +    "bb_ua_pads\\[4\\].pad",
++    "bb_ua_pads\\[5\\].pad",
  
      "dvss_bb_pads\\[1\\].pad",
      "dvdd_bb_pads\\[1\\].pad",
-@@ -77,7 +77,7 @@ PAD_NORTH: [
+@@ -38,8 +38,8 @@ PAD_EAST: [
+     "bb_uio_pads\\[3\\].pad",
+     "bb_uio_pads\\[4\\].pad",
+     "bb_uio_pads\\[5\\].pad",
+-    "bb_uio_pads\\[6\\].pad",
+-    "bb_uio_pads\\[7\\].pad",
++    "nc_bb\\[3\\].pad",
++    "nc_bb\\[4\\].pad",
+ 
+     "bidir\\[0\\].pad",
+ 
+@@ -77,21 +77,21 @@ PAD_NORTH: [
  ]
  
  # West (south -> north, 26 pads):
 -#   0..12:  VDD_BB domain (BB_UI[0..7], nc_bb[0..2], DVSS, DVDD_BB)
-+#   0..12:  VDD_BB domain (BB_UI[0..3], BB_UA[0..2], BB_UI[4..7], DVSS, DVDD_BB)
++#   0..12:  VDD_BB domain (nc_bb[5..6], BB_UA[0..3] ADC0..3, nc_bb[7..11], DVSS, DVDD_BB)
  #   [brk_vdd_w = fill10_noVDD placed in gap between pad 12 and pad 13]
  #   13..25: GNSS VDD domain (SCLK, RST_N, SDI, CS_N, SDO, nc[7..10], DVSS, DVDD, nc[11..12])
  PAD_WEST: [
-@@ -85,13 +85,13 @@ PAD_WEST: [
-     "bb_ui_pads\\[1\\].pad",
-     "bb_ui_pads\\[2\\].pad",
-     "bb_ui_pads\\[3\\].pad",
-+    "bb_ua_pads\\[0\\].pad",
-+    "bb_ua_pads\\[1\\].pad",
-+    "bb_ua_pads\\[2\\].pad",
-     "bb_ui_pads\\[4\\].pad",
-     "bb_ui_pads\\[5\\].pad",
-     "bb_ui_pads\\[6\\].pad",
-     "bb_ui_pads\\[7\\].pad",
+-    "bb_ui_pads\\[0\\].pad",
+-    "bb_ui_pads\\[1\\].pad",
+-    "bb_ui_pads\\[2\\].pad",
+-    "bb_ui_pads\\[3\\].pad",
+-    "bb_ui_pads\\[4\\].pad",
+-    "bb_ui_pads\\[5\\].pad",
+-    "bb_ui_pads\\[6\\].pad",
+-    "bb_ui_pads\\[7\\].pad",
 -    "nc_bb\\[0\\].pad",
 -    "nc_bb\\[1\\].pad",
 -    "nc_bb\\[2\\].pad",
++    "nc_bb\\[5\\].pad",
++    "nc_bb\\[6\\].pad",
++    "bb_ua_pads\\[0\\].pad",
++    "bb_ua_pads\\[1\\].pad",
++    "bb_ua_pads\\[2\\].pad",
++    "bb_ua_pads\\[3\\].pad",
++    "nc_bb\\[7\\].pad",
++    "nc_bb\\[8\\].pad",
++    "nc_bb\\[9\\].pad",
++    "nc_bb\\[10\\].pad",
++    "nc_bb\\[11\\].pad",
  
      "dvss_bb_pads\\[2\\].pad",
      "dvdd_bb_pads\\[2\\].pad",
 diff --git a/chip/src/chip_core.sv b/chip/src/chip_core.sv
-index fbddeef..b880c7e 100644
+index fbddeef..bf81405 100644
 --- a/chip/src/chip_core.sv
 +++ b/chip/src/chip_core.sv
-@@ -5,9 +5,10 @@
+@@ -5,9 +5,11 @@
  //
  //   * GNSS SPI control registers (standard cells, GNSS VDD domain): 24-bit frame, mode 0, MSB first.
  //   * gnss_afe_analog: analog hard macro (VDDA / VDDV / VSSA, north pad block).
@@ -556,13 +642,14 @@ index fbddeef..b880c7e 100644
 -//     synthesizer in a dedicated VDD_BB power domain (shared VSS), isolated at the padring
 -//     by fill10_noVDD and supplied by fill10_supplyVDD. Zero signals cross between VDD and VDD_BB.
 +//   * megabytebeat_macro (when HAS_MEGABYTEBEAT is defined): mixed-signal 5-track bytebeat
-+//     synthesizer (32.768 kHz /4 = 8.192 kHz DAC-only) with 5x 8-bit R-2R DAC analog outputs
-+//     (bb_ua[4:0]) in a dedicated VDD_BB power domain (shared VSS), isolated at the padring by
-+//     fill10_noVDD and supplied by fill10_supplyVDD. Zero signals cross between VDD and VDD_BB.
++//     synthesizer (32.768 kHz native tick) with 4x 4-bit ramp ADC CV inputs (bb_ua[3:0]) and
++//     2x selectable 8-bit R-2R DAC audio outputs (bb_ua[5:4]) in a dedicated VDD_BB power
++//     domain (shared VSS), isolated at the padring by fill10_noVDD and supplied by
++//     fill10_supplyVDD. Zero signals cross between VDD and VDD_BB.
  
  `default_nettype none
  
-@@ -18,6 +19,10 @@ module chip_core #(
+@@ -18,6 +20,10 @@ module chip_core #(
      parameter NUM_INPUT_PADS,
      parameter NUM_BIDIR_PADS,
      parameter NUM_ANALOG_PADS
@@ -573,30 +660,39 @@ index fbddeef..b880c7e 100644
      )(
      `ifdef USE_POWER_PINS
      inout  wire VDD,
-@@ -57,9 +62,8 @@ module chip_core #(
+@@ -55,13 +61,10 @@ module chip_core #(
+     input  wire       bb_clk,
+     input  wire       bb_rst_n,
      input  wire       bb_ena,
-     input  wire [7:0] bb_ui_in,
-     input  wire [7:0] bb_uio_in,
+-    input  wire [7:0] bb_ui_in,
+-    input  wire [7:0] bb_uio_in,
 -    output wire [4:0] bb_uo_out,
++    input  wire [5:0] bb_uio_in,
 +    inout  wire [NUM_BB_ANALOG_PADS-1:0] bb_ua,
      output wire       bb_vdd_hi_s,
 -    output wire       bb_vdd_hi_e,
      output wire       bb_vss_lo_s,
-     output wire       bb_vss_lo_w,
+-    output wire       bb_vss_lo_w,
      output wire       bb_vss_lo_e
-@@ -165,9 +169,8 @@ module chip_core #(
+ `endif
+ );
+@@ -163,13 +166,10 @@ module chip_core #(
+         .clk         (bb_clk),
+         .rst_n       (bb_rst_n),
          .ena         (bb_ena),
-         .ui_in       (bb_ui_in),
+-        .ui_in       (bb_ui_in),
          .uio_in      (bb_uio_in),
 -        .uo_pwm      (bb_uo_out),
 +        .ua          (bb_ua),
          .vdd_bb_hi_s (bb_vdd_hi_s),
 -        .vdd_bb_hi_e (bb_vdd_hi_e),
          .vss_lo_s    (bb_vss_lo_s),
-         .vss_lo_w    (bb_vss_lo_w),
+-        .vss_lo_w    (bb_vss_lo_w),
          .vss_lo_e    (bb_vss_lo_e)
+     );
+ `endif
 diff --git a/chip/src/chip_top.sv b/chip/src/chip_top.sv
-index 4360994..1e15842 100644
+index 4360994..69681cf 100644
 --- a/chip/src/chip_top.sv
 +++ b/chip/src/chip_top.sv
 @@ -39,7 +39,10 @@ module chip_top #(
@@ -619,7 +715,7 @@ index 4360994..1e15842 100644
      inout  wire DVDD_BB,    // megabytebeat padring supply (shorted to VDD_BB in gf180mcu_fd_io)
      `endif
      `endif
-@@ -77,14 +80,17 @@ module chip_top #(
+@@ -77,14 +80,16 @@ module chip_top #(
      inout  wire [NUM_NC_PADS-1:0] nc_PAD
  `ifdef HAS_MEGABYTEBEAT
      ,
@@ -627,10 +723,11 @@ index 4360994..1e15842 100644
 +    inout  wire        bb_clk_PAD,    // megabytebeat 32.768 kHz clock (VDD_BB domain)
      inout  wire        bb_rst_n_PAD,  // megabytebeat active-low reset (VDD_BB domain)
      inout  wire        bb_ena_PAD,    // megabytebeat enable, internal pull-down (VDD_BB domain)
-     inout  wire [7:0]  bb_ui_PAD,     // megabytebeat param {b[3:0], a[3:0]} (VDD_BB domain)
-     inout  wire [7:0]  bb_uio_PAD,    // megabytebeat param {d[3:0], c[3:0]} (VDD_BB domain)
+-    inout  wire [7:0]  bb_ui_PAD,     // megabytebeat param {b[3:0], a[3:0]} (VDD_BB domain)
+-    inout  wire [7:0]  bb_uio_PAD,    // megabytebeat param {d[3:0], c[3:0]} (VDD_BB domain)
 -    inout  wire [4:0]  bb_uo_PAD,     // megabytebeat PWM audio {trk7, trk3, trk2, trk1, trk0} (VDD_BB)
-+    inout  wire [NUM_BB_ANALOG_PADS-1:0] bb_ua_PAD  // megabytebeat 5x 8-bit R-2R DAC analog out
++    inout  wire [5:0]  bb_uio_PAD,    // megabytebeat DAC track select {dac1[2:0], dac0[2:0]}
++    inout  wire [NUM_BB_ANALOG_PADS-1:0] bb_ua_PAD  // megabytebeat 4x ADC in + 2x DAC out
 +`ifdef HAS_NC_BB_PADS
 +    ,
      inout  wire [NUM_NC_BB_PADS-1:0] nc_bb_PAD
@@ -639,18 +736,23 @@ index 4360994..1e15842 100644
  );
  
      wire clk_PAD2CORE;
-@@ -111,10 +117,7 @@ module chip_top #(
+@@ -109,14 +114,9 @@ module chip_top #(
+     wire        bb_clk_PAD2CORE;
+     wire        bb_rst_n_PAD2CORE;
      wire        bb_ena_PAD2CORE;
-     wire [7:0]  bb_ui_PAD2CORE;
-     wire [7:0]  bb_uio_PAD2CORE;
+-    wire [7:0]  bb_ui_PAD2CORE;
+-    wire [7:0]  bb_uio_PAD2CORE;
 -    wire [4:0]  bb_uo_CORE2PAD;
 -    wire [4:0]  bb_uo_PAD2CORE_unused;
++    wire [5:0]  bb_uio_PAD2CORE;
      wire        bb_vdd_hi_s;
 -    wire        bb_vdd_hi_e;
      wire        bb_vss_lo_s;
-     wire        bb_vss_lo_w;
+-    wire        bb_vss_lo_w;
      wire        bb_vss_lo_e;
-@@ -139,7 +142,9 @@ module chip_top #(
+ `endif
+ 
+@@ -139,7 +139,9 @@ module chip_top #(
              `ifdef USE_POWER_PINS
              .DVDD   (DVDD),
              .DVSS   (DVSS),
@@ -660,7 +762,7 @@ index 4360994..1e15842 100644
              .VSS    (VSS)
              `endif
          );
-@@ -150,8 +155,10 @@ module chip_top #(
+@@ -150,8 +152,10 @@ module chip_top #(
              `ifdef USE_POWER_PINS
              .DVDD   (DVDD),
              .DVSS   (DVSS),
@@ -673,7 +775,7 @@ index 4360994..1e15842 100644
              `endif
          );
      end
-@@ -161,7 +168,9 @@ module chip_top #(
+@@ -161,7 +165,9 @@ module chip_top #(
              `ifdef USE_POWER_PINS
              .DVDD   (DVDD),
              .DVSS   (DVSS),
@@ -683,7 +785,7 @@ index 4360994..1e15842 100644
              .VSS    (VSS)
              `endif
          );
-@@ -172,8 +181,10 @@ module chip_top #(
+@@ -172,8 +178,10 @@ module chip_top #(
              `ifdef USE_POWER_PINS
              .DVDD   (DVDD),
              .DVSS   (DVSS),
@@ -696,7 +798,7 @@ index 4360994..1e15842 100644
              `endif
          );
      end
-@@ -188,7 +199,9 @@ module chip_top #(
+@@ -188,7 +196,9 @@ module chip_top #(
              `ifdef USE_POWER_PINS
              .DVDD   (DVDD_BB),
              .DVSS   (DVSS),
@@ -706,7 +808,7 @@ index 4360994..1e15842 100644
              .VSS    (VSS)
              `endif
          );
-@@ -199,8 +212,10 @@ module chip_top #(
+@@ -199,8 +209,10 @@ module chip_top #(
              `ifdef USE_POWER_PINS
              .DVDD   (DVDD_BB),
              .DVSS   (DVSS),
@@ -719,7 +821,28 @@ index 4360994..1e15842 100644
              `endif
          );
      end
-@@ -406,25 +421,19 @@ module chip_top #(
+@@ -382,19 +394,7 @@ module chip_top #(
+     );
+ 
+     generate
+-    for (genvar i=0; i<8; i++) begin : bb_ui_pads
+-        (* keep *)
+-        `gf180mcu_xxx_io__in_s pad (
+-            `ifdef USE_POWER_PINS
+-            .DVDD (DVDD_BB), .DVSS (DVSS), .VDD (VDD_BB), .VSS (VSS),
+-            `endif
+-            .Y    (bb_ui_PAD2CORE[i]),
+-            .PAD  (bb_ui_PAD[i]),
+-            .PU   (bb_vss_lo_w),
+-            .PD   (bb_vss_lo_w)
+-        );
+-    end
+-    for (genvar i=0; i<8; i++) begin : bb_uio_pads
++    for (genvar i=0; i<6; i++) begin : bb_uio_pads
+         (* keep *)
+         `gf180mcu_xxx_io__in_s pad (
+             `ifdef USE_POWER_PINS
+@@ -406,25 +406,19 @@ module chip_top #(
              .PD   (bb_vss_lo_e)
          );
      end
@@ -753,7 +876,7 @@ index 4360994..1e15842 100644
      for (genvar i=0; i<NUM_NC_BB_PADS; i++) begin : nc_bb
          (* keep *)
          `gf180mcu_xxx_io__asig_5p0 pad (
-@@ -437,6 +446,7 @@ module chip_top #(
+@@ -437,6 +431,7 @@ module chip_top #(
              .ASIG5V (nc_bb_PAD[i])
          );
      end
@@ -761,7 +884,7 @@ index 4360994..1e15842 100644
      endgenerate
  `endif
  
-@@ -491,6 +501,10 @@ module chip_top #(
+@@ -491,6 +486,10 @@ module chip_top #(
          .NUM_INPUT_PADS  (NUM_INPUT_PADS),
          .NUM_BIDIR_PADS  (NUM_BIDIR_PADS),
          .NUM_ANALOG_PADS (NUM_ANALOG_PADS)
@@ -772,45 +895,48 @@ index 4360994..1e15842 100644
      ) i_chip_core (
          `ifdef USE_POWER_PINS
          .VDD        (VDD),
-@@ -530,9 +544,8 @@ module chip_top #(
+@@ -528,13 +527,10 @@ module chip_top #(
+         .bb_clk       (bb_clk_PAD2CORE),
+         .bb_rst_n     (bb_rst_n_PAD2CORE),
          .bb_ena       (bb_ena_PAD2CORE),
-         .bb_ui_in     (bb_ui_PAD2CORE),
+-        .bb_ui_in     (bb_ui_PAD2CORE),
          .bb_uio_in    (bb_uio_PAD2CORE),
 -        .bb_uo_out    (bb_uo_CORE2PAD),
 +        .bb_ua        (bb_ua_PAD),
          .bb_vdd_hi_s  (bb_vdd_hi_s),
 -        .bb_vdd_hi_e  (bb_vdd_hi_e),
          .bb_vss_lo_s  (bb_vss_lo_s),
-         .bb_vss_lo_w  (bb_vss_lo_w),
+-        .bb_vss_lo_w  (bb_vss_lo_w),
          .bb_vss_lo_e  (bb_vss_lo_e)
+ `endif
+     );
 diff --git a/chip/src/slot_defines.svh b/chip/src/slot_defines.svh
-index f512ba8..ad87d66 100644
+index f512ba8..fbcdcbe 100644
 --- a/chip/src/slot_defines.svh
 +++ b/chip/src/slot_defines.svh
 @@ -23,6 +23,9 @@
  //   * megabytebeat: VDD_BB / DVDD_BB (3 pads) + shared VSS / DVSS, separated from
  //                   GNSS digital VDD via fill10_noVDD (east & west) and fed into
  //                   megabytebeat_macro via 6x fill10_supplyVDD
-+//   * Mixed-signal 5x 8-bit R-2R DAC stage (32.768 kHz /4 = 8.192 kHz DAC-only):
-+//     5x asig_5p0 DAC outputs (bb_ua_PAD[4:0]), 16x parameter inputs (bb_ui_PAD, bb_uio_PAD),
-+//     and 3x South VDD_BB NC pads (nc_bb_PAD[2:0]).
++//   * Mixed-signal 4x 4-bit ramp ADC + 2x 8-bit R-2R DAC stage (32.768 kHz native tick):
++//     6x asig_5p0 analog pads (bb_ua_PAD[3:0] = ADC CV in, bb_ua_PAD[5:4] = DAC audio out),
++//     6x DAC track-select inputs (bb_uio_PAD[5:0]), and 12x VDD_BB NC pads (nc_bb_PAD[11:0]).
  `define HAS_MEGABYTEBEAT
  
  // Power/ground pads for I/O + core (gf180mcu_fd_io shorts DVDD=VDD, DVSS=VSS)
-@@ -39,10 +42,14 @@
+@@ -39,9 +42,13 @@
  `define NUM_BIDIR_PADS 6
  `define NUM_ANALOG_PADS 3
  
 -// Unused pad positions (asig_5p0, kept for fixed 73-pad 0p5x1 bonding frame)
--`define NUM_NC_PADS 13
-+// megabytebeat analog outputs and unused South pads inside VDD_BB ring
-+`define NUM_BB_ANALOG_PADS 5
++// megabytebeat analog (4x ADC + 2x DAC) and unused VDD_BB pads
++`define NUM_BB_ANALOG_PADS 6
 +`define HAS_NC_BB_PADS
- `define NUM_NC_BB_PADS 3
- 
-+// Unused pad positions in GNSS VDD ring (asig_5p0, kept for fixed 73-pad 0p5x1 bonding frame)
-+`define NUM_NC_PADS 13
++`define NUM_NC_BB_PADS 12
 +
++// Unused pad positions in GNSS VDD ring (asig_5p0, kept for fixed 73-pad 0p5x1 bonding frame)
+ `define NUM_NC_PADS 13
+-`define NUM_NC_BB_PADS 3
+ 
  `endif
  
- `ifdef SLOT_1X0P5

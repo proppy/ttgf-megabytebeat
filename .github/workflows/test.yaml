@@ -41,12 +41,31 @@ jobs:
       - name: Verify native tool versions match LibreLane
         run: uv run python src/tools.py
 
-      - name: Verify R-2R ladder & 8-bit DAC (DRC, LVS, Magic PEX, 256-code PVT ngspice, render)
+      - name: Verify 4-bit Ramp ADC DSLX & SystemVerilog FFI codegen (adc_ramp.x)
+        uses: ./.github/actions/xls-action
+        with:
+          xls-repo: proppy/xls
+          xls-version: v0.0.0-11264-g628b096fe
+          dslx-path: src/adc_ramp.x
+          dslx-top: AdcRamp
+          ir-path: /tmp/adc_ramp.ir
+          opt-ir-path: /tmp/adc_ramp.opt.ir
+          verilog-path: /tmp/adc_ramp.sv
+          verilog-module-name: adc_ramp
+          verilog-reset-signal-name: reset
+          use-system-verilog: true
+          clock-period-ps: 30517500
+          delay-model: gf180mcu_3v3
+          area-model: gf180mcu_3v3
+          ffi-fallback-delay-ps: 500
+          artifact-name: xls-generated-adc-ramp
+
+      - name: Verify R-2R ladder, 8-bit DAC & 4-bit Ramp ADC (DRC, LVS, Magic PEX, PVT ngspice, render)
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
         run: |
-          uv run python src/dac.py --width 4 --l-1r 6.0 --l-2r 5.42 --sum-res --out-dir gen/r2r4
           uv run python src/dac.py
+          uv run python src/adc.py
 
       - name: Generate SystemVerilog for megabytebeat
         uses: ./.github/actions/xls-action
@@ -54,7 +73,7 @@ jobs:
           xls-repo: proppy/xls
           xls-version: v0.0.0-11264-g628b096fe
           dslx-path: src/megabytebeat.x
-          dslx-top: megabytebeat
+          dslx-top: MegaBytebeat
           ir-path: src/megabytebeat.ir
           opt-ir-path: src/megabytebeat.opt.ir
           verilog-path: src/megabytebeat.sv

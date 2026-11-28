@@ -16,8 +16,9 @@ except ImportError:  # pragma: no cover - layout pcells only needed for GDS gene
 
 PDK_ROOT = Path(os.environ.get("PDK_ROOT", "/home/exedev/workspace/pdk"))
 GF180_DIR = PDK_ROOT / "gf180mcuD"
-SC_DIR = GF180_DIR / "libs.ref/gf180mcu_fd_sc_mcu7t5v0"
-SC_SPICE = SC_DIR / "spice/gf180mcu_fd_sc_mcu7t5v0.spice"
+SC_LIB = "gf180mcu_fd_sc_mcu7t5v0"
+SC_DIR = GF180_DIR / "libs.ref" / SC_LIB
+SC_SPICE = SC_DIR / f"spice/{SC_LIB}.spice"
 IO_SPICE = GF180_DIR / "libs.ref/gf180mcu_fd_io/spice/gf180mcu_fd_io.spice"
 DRC_SCRIPT = GF180_DIR / "libs.tech/klayout/drc/run_drc.py"
 DRC_ARGS = ("--variant=D",)
@@ -27,8 +28,35 @@ NG_DESIGN = GF180_DIR / "libs.tech/ngspice/design.ngspice"
 NG_LIB = GF180_DIR / "libs.tech/ngspice/sm141064.ngspice"
 LYP_PATH = GF180_DIR / "libs.tech/klayout/tech/gf180mcu.lyp"
 
+# GF180MCU 7T 5V0 standard cells used by mixed-signal ADC/DAC wrappers
+CLKBUF_20_CELL = f"{SC_LIB}__clkbuf_20"
+CLKINV_12_CELL = f"{SC_LIB}__clkinv_12"
+TIEL_CELL = f"{SC_LIB}__tiel"
+AOI21_1_CELL = f"{SC_LIB}__aoi21_1"
+INV_1_CELL = f"{SC_LIB}__inv_1"
+
+# ngspice initialization for GF180MCU BSIM3v3/HSA models
+NGSPICE_INIT_COMMANDS: tuple[str, ...] = ("set ngbehavior=hsa", "set ng_nomodcheck")
+
+# Shared GF180MCU PVT corners: (corner, rcorner, vdd_V, temp_C)
+PVT_CORNERS: tuple[tuple[str, str, float, float], ...] = (
+    # TTGF26c 3.3 V +/- 10% PVT (correlated, skewed, and uncorrelated MOS/res cross-corners)
+    ("typical", "res_typical", 3.3, 27.0),
+    ("ss", "res_ss", 3.0, 125.0),
+    ("ff", "res_ff", 3.6, -40.0),
+    ("sf", "res_typical", 3.3, 27.0),
+    ("fs", "res_typical", 3.3, 27.0),
+    ("ss", "res_ff", 3.0, 125.0),
+    ("ff", "res_ss", 3.6, -40.0),
+    # wafer.space 5.0 V +/- 10% PVT
+    ("typical", "res_typical", 5.0, 27.0),
+    ("ss", "res_ss", 4.5, 125.0),
+    ("ff", "res_ff", 5.5, -40.0),
+)
+
 RES_MODEL = "ppolyf_u_1k_6p0"
 RES_CELL = "horiz_hres_6p0"
+HRES_W = 1.00  # um; nominal ppolyf_u_1k_6p0 finger width
 HRES_GUARD_X = 1.20  # 0.45 dualgate->dummy + 0.40 dummy + 0.35 dummy->resistor (DV.8 / HRES.5)
 HRES_HEAD_X = 0.81  # 0.61 poly head + 0.20 pplus overhang past res_mk end
 HRES_GAP_X = 0.50  # minimum inter-finger pplus-to-pplus spacing
@@ -42,7 +70,7 @@ def ngspice_pdk_files(pdk_root: Path | None = None) -> tuple[Path, Path, Path]:
     return (
         gf180_dir / "libs.tech/ngspice/design.ngspice",
         gf180_dir / "libs.tech/ngspice/sm141064.ngspice",
-        gf180_dir / "libs.ref/gf180mcu_fd_sc_mcu7t5v0/spice/gf180mcu_fd_sc_mcu7t5v0.spice",
+        gf180_dir / f"libs.ref/{SC_LIB}/spice/{SC_LIB}.spice",
     )
 
 

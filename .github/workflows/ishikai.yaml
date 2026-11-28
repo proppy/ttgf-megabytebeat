@@ -24,7 +24,7 @@ jobs:
           xls-repo: proppy/xls
           xls-version: v0.0.0-11264-g628b096fe
           dslx-path: src/megabytebeat.x
-          dslx-top: megabytebeat
+          dslx-top: MegaBytebeat
           ir-path: src/megabytebeat.ir
           opt-ir-path: src/megabytebeat.opt.ir
           verilog-path: src/megabytebeat.v
@@ -70,7 +70,7 @@ jobs:
       - name: Install Python dependencies
         run: uv sync
 
-      - name: Build & verify passive r2r_ladder_8bit macro & generate ISHI-KAI config
+      - name: Build & verify passive ADC/DAC macros & generate ISHI-KAI config
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk_analog
         run: |
@@ -87,7 +87,7 @@ jobs:
       - name: Install LibreLane
         run: pip install --pre "librelane==3.1.0.dev6"
 
-      - name: Harden megabytebeat_macro (LibreLane Classic, VDD_BB, 5x R-2R DAC, 32.768 kHz)
+      - name: Harden megabytebeat_macro (LibreLane Classic, VDD_BB, 4x ADC + 2x DAC, 32.768 kHz)
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
         run: |
@@ -103,10 +103,12 @@ jobs:
             --save-views-to ishikai/final \
             gen/ishikai_config.yaml
 
-      - name: Verify post-PnR 5x DAC routing parasitics in SPEF
+      - name: Verify post-PnR 4x ADC + 2x DAC routing parasitics in SPEF
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
-        run: uv run python src/dac.py --check-spef ishikai/final/spef
+        run: |
+          uv run python src/adc.py --check-spef ishikai/final/spef
+          uv run python src/dac.py --check-spef ishikai/final/spef --channels 2 --out-nets ua[4],ua[5]
 
       - name: Stage and validate drop-in bundle
         run: |

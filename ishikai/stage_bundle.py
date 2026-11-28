@@ -10,17 +10,25 @@ import shutil
 from pathlib import Path
 
 REQUIRED_SRC_FILES = (
+    "adc_ramp.x",
     "bytebeat.x",
     "dac.x",
     "megabytebeat.x",
     "megabytebeat.ir",
     "megabytebeat.opt.ir",
     "megabytebeat.v",
+    "r2r_ladder_4bit_sum.v",
     "r2r_ladder_8bit.v",
+    "sc_adc_ramp_1ch_4b.v",
     "sc_r2r_dac_8bit.v",
 )
 
 REQUIRED_MACRO_FILES = (
+    "adc/r2r_ladder_4bit_sum.gds",
+    "adc/r2r_ladder_4bit_sum.lef",
+    "adc/r2r_ladder_4bit_sum.lib",
+    "adc/r2r_ladder_4bit_sum.spice",
+    "adc/r2r_ladder_4bit_sum.pex.spice",
     "dac/r2r_ladder_8bit.gds",
     "dac/r2r_ladder_8bit.lef",
     "dac/r2r_ladder_8bit.lib",
@@ -84,6 +92,7 @@ def rewrite_config_for_ishikai(config_text: str) -> str:
     )
     rewritten = rewritten.replace("dir::../ishikai/", "dir::")
     rewritten = rewritten.replace("dir::../gen/", "dir::macros/")
+    rewritten = rewritten.replace("dir::adc/", "dir::macros/adc/")
     rewritten = rewritten.replace("dir::dac/", "dir::macros/dac/")
     rewritten = rewritten.replace("dir::megabytebeat_macro.sv", "dir::src/megabytebeat_macro.sv")
     return rewritten

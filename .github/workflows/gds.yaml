@@ -19,7 +19,7 @@ jobs:
           xls-repo: proppy/xls
           xls-version: v0.0.0-11264-g628b096fe
           dslx-path: src/megabytebeat.x
-          dslx-top: megabytebeat
+          dslx-top: MegaBytebeat
           ir-path: src/megabytebeat.ir
           opt-ir-path: src/megabytebeat.opt.ir
           verilog-path: src/megabytebeat.sv
@@ -61,7 +61,7 @@ jobs:
       - name: Install Python dependencies
         run: uv sync
 
-      - name: Build & verify passive r2r_ladder_8bit macro & harden 2x2 analog tile
+      - name: Build & verify passive ADC/DAC macros & harden 2x2 analog tile
         env:
           PDK_ROOT: ${{ runner.temp }}/pdk
         run: |
@@ -85,15 +85,18 @@ jobs:
             --scl gf180mcu_fd_sc_mcu7t5v0 \
             --save-views-to gen/final \
             gen/tt_config.json
-          uv run python src/dac.py --check-spef gen/final/spef
+          uv run python src/dac.py --check-spef gen/final/spef --channels 2 --out-nets ua[4],ua[5]
+          uv run python src/adc.py --check-spef gen/final/spef
 
-      - name: Upload passive DAC SPICE, Magic PEX & post-PnR SPEF for GL AMS co-sim
+      - name: Upload passive ADC/DAC SPICE, Magic PEX & post-PnR SPEF for GL AMS co-sim
         uses: actions/upload-artifact@v7
         with:
           name: dac-spice
           path: |
             gen/dac/r2r_ladder_8bit.spice
             gen/dac/r2r_ladder_8bit.pex.spice
+            gen/adc/r2r_ladder_4bit_sum.spice
+            gen/adc/r2r_ladder_4bit_sum.pex.spice
             gen/final/spef/**/*.spef
 
       - name: Publish TTGF26c custom GDS artifact
@@ -126,7 +129,7 @@ jobs:
         with:
           name: tt_submission
 
-      - name: Download passive DAC SPICE & post-PnR SPEF
+      - name: Download passive ADC/DAC SPICE & post-PnR SPEF
         uses: actions/download-artifact@v7
         with:
           name: dac-spice
@@ -164,7 +167,7 @@ jobs:
           cd test
           rm -f tb.vcd tb.fst results.xml
           make clean
-          GATES=yes SIM=icarus COCOTB_TEST_FILTER="test_bytebeat" make
+          GATES=yes SIM=icarus COCOTB_TEST_FILTER="'test_reset_and_standby_power_gating|test_end_to_end_mixed_signal'" make
           python -m cocotb_tools.check_results results.xml
           rm -f tb.vcd tb.fst results.xml
           make clean

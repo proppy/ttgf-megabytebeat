@@ -31,18 +31,28 @@
   "//": "https://tinytapeout.com/faq/#how-can-i-map-an-additional-external-clock-to-one-of-the-gpios",
   "CLOCK_PORT": "clk",
 
-  "//": "Mixed-signal 2x2 analog tile + passive R-2R DAC macro configuration:",
+  "//": "Mixed-signal 2x2 analog tile + passive 4x ADC & 2x DAC macro configuration:",
   "DESIGN_NAME": "tt_um_proppy_megabytebeat",
   "USE_SLANG": true,
   "VERILOG_FILES": [
     "dir::tt_um_proppy_megabytebeat.v",
     "dir::pwm_audio.v",
     "dir::megabytebeat.sv",
+    "dir::sc_adc_ramp_1ch_4b.v",
     "dir::sc_r2r_dac_8bit.v"
   ],
   "PNR_SDC_FILE": "dir::tt_um_proppy_megabytebeat.sdc",
   "SIGNOFF_SDC_FILE": "dir::tt_um_proppy_megabytebeat.sdc",
   "MACROS": {
+    "r2r_ladder_4bit_sum": {
+      "gds": ["dir::../gen/adc/r2r_ladder_4bit_sum.gds"],
+      "lef": ["dir::../gen/adc/r2r_ladder_4bit_sum.lef"],
+      "vh": ["dir::r2r_ladder_4bit_sum.v"],
+      "lib": {
+        "*": ["dir::../gen/adc/r2r_ladder_4bit_sum.lib"]
+      },
+      "spice": ["dir::../gen/adc/r2r_ladder_4bit_sum.spice"]
+    },
     "r2r_ladder_8bit": {
       "gds": ["dir::../gen/dac/r2r_ladder_8bit.gds"],
       "lef": ["dir::../gen/dac/r2r_ladder_8bit.lef"],
@@ -98,9 +108,9 @@
     "gf180mcu_fd_sc_mcu7t5v0__dlyd_2",
     "gf180mcu_fd_sc_mcu7t5v0__dlyd_4"
   ],
-  "RSZ_DONT_TOUCH_RX": ".*(u_tiel|u_term|u_buf|u_r2r|term_tie|pre_drv|term_drv|in_drv|^ua\\[).*",
+  "RSZ_DONT_TOUCH_RX": ".*(u_tieh|u_tiel|u_term|u_buf|u_inv|u_cmp|u_r2r|term_tie|pre_drv|term_drv|in_drv|vsum|cmp_lo|^ua\\[).*",
   "DESIGN_REPAIR_BUFFER_INPUT_PORTS": true,
-  "IGNORE_DISCONNECTED_MODULES": ["r2r_ladder_8bit"],
+  "IGNORE_DISCONNECTED_MODULES": ["r2r_ladder_8bit", "r2r_ladder_4bit_sum"],
 
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 

@@ -1,12 +1,11 @@
 # Copyright 2026 Google LLC.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Timing constraints for Tiny Tapeout 2x2 analog `tt_um_proppy_megabytebeat` (2.048 MHz).
+# Timing constraints for TTGF26c 2x2 mixed-signal `tt_um_proppy_megabytebeat` (2.048 MHz).
 # Mirrors LibreLane's base.sdc for digital I/O while:
 #   1. Excluding passive analog inout ports `ua[*]` from digital delay/load/driving-cell checks.
-#   2. Constraining `u_megabytebeat`'s 8 kHz sample-rate registers (`____t`, `____pcm`, enabled
-#      strictly on `sample_rdy = (clk_8 == 8'hff)`) as a 256-cycle multicycle path, while
-#      keeping `clk_8[*]`, `pwm_audio[*]`, and handshake regs strictly at 1-cycle (488 ns).
+#   2. Constraining `u_megabytebeat`'s /64 tick-enabled state registers as a 64-cycle multicycle path
+#      (keeping div64, rst_n, and 5x PWM strictly at 1-cycle).
 
 create_clock [get_ports clk] -name clk -period $::env(CLOCK_PERIOD)
 
@@ -47,37 +46,29 @@ set cap_load [expr $::env(OUTPUT_CAP_LOAD) / 1000.0]
 puts "\[INFO\] Setting digital output load to: $cap_load"
 set_load $cap_load $dig_outputs
 
-# Analog pins ua[4:0] (5x passive R-2R DAC out) and unused ua[7:5] are non-timed.
+# Analog pins ua[5:0] (4x ramp ADC sum_in, 2x R-2R DAC out) & unused ua[7:6] are non-timed.
 set_false_path -from $ana_ports
 set_false_path -to $ana_ports
 
-# u_megabytebeat state flops (32x ____t + 40x ____pcm, aliased by Yosys to pcm[*]/pcm_bus[*])
-# only clock-enable on sample_rdy = (clk_8 == 8'hff) -> 256 cycles (125 us).
-# clk_8[*], pwm_audio[*], and ___*_already_done_reg stay strictly at 1-cycle (488 ns).
-set sample_regs {}
+# u_megabytebeat registers (state, t, pcm_bus) update strictly on tick_en = (div64 == 6'h3f) -> 64 cycles.
+# Keeping div64, rst_n, and 5x u_pwm* out of u_megabytebeat_regs holds them strictly at 1-cycle.
+set u_megabytebeat_regs {}
 foreach pin [all_registers -output_pins] {
     set net [get_nets -quiet -of_objects $pin]
     if { $net ne "" } {
         set net_name [get_full_name [lindex $net 0]]
-        if {
-            [string match {*____t*} $net_name]
-            || [string match {*____pcm*} $net_name]
-            || [string match {*pcm\[*} $net_name]
-            || [string match {*pcm_bus*} $net_name]
-        } {
+        if { [string match "*u_megabytebeat.*" $net_name] || [string match "*pcm_bus*" $net_name] } {
             set cell [lindex [get_cells -quiet -of_objects $pin] 0]
-            if { $cell ne "" && [lsearch -exact $sample_regs $cell] < 0 } {
-                lappend sample_regs $cell
+            if { $cell ne "" && [lsearch -exact $u_megabytebeat_regs $cell] < 0 } {
+                lappend u_megabytebeat_regs $cell
             }
         }
     }
 }
-if { [llength $sample_regs] > 0 } {
-    puts "\[INFO\] Applying 256-cycle multicycle path to [llength $sample_regs] sample-rate registers."
-    set_multicycle_path -setup 256 -from $sample_regs -to $sample_regs
-    set_multicycle_path -hold  255 -from $sample_regs -to $sample_regs
-    set_multicycle_path -setup 256 -from [get_ports {ui_in[*] uio_in[*]}] -to $sample_regs
-    set_multicycle_path -hold  255 -from [get_ports {ui_in[*] uio_in[*]}] -to $sample_regs
+if { [llength $u_megabytebeat_regs] > 0 } {
+    puts "\[INFO\] Applying 64-cycle multicycle path to [llength $u_megabytebeat_regs] u_megabytebeat state registers."
+    set_multicycle_path -setup 64 -from $u_megabytebeat_regs -to $u_megabytebeat_regs
+    set_multicycle_path -hold  63 -from $u_megabytebeat_regs -to $u_megabytebeat_regs
 }
 
 set_clock_uncertainty $::env(CLOCK_UNCERTAINTY_CONSTRAINT) $clocks

@@ -5,6 +5,7 @@ meta:
 DESIGN_NAME: megabytebeat_macro
 VERILOG_FILES:
   - dir::../src/megabytebeat.v
+  - dir::../src/sc_adc_ramp_1ch_4b.v
   - dir::../src/sc_r2r_dac_8bit.v
   - dir::megabytebeat_macro.sv
 
@@ -17,11 +18,11 @@ VDD_NETS:
 GND_NETS:
   - VSS
 
-# Clock: 32.768 kHz (/4 = 8.192 kHz DAC audio sample rate)
+# Clock: 32.768 kHz (1:1 ADC tick -> 2.048 kHz CV refresh; /4 = 8.192 kHz DAC audio)
 CLOCK_PORT: clk
 CLOCK_PERIOD: 30517.5
 
-# Floorplan: 960 x 960 um (VDD_BB mixed-signal macro with 5x passive 8-bit R-2R DACs)
+# Floorplan: 960 x 960 um (VDD_BB mixed-signal macro with 4x 4-bit ramp ADC + 2x 8-bit R-2R DAC)
 FP_SIZING: absolute
 DIE_AREA: [0, 0, 960, 960]
 CORE_AREA: [30, 30, 930, 930]
@@ -29,8 +30,20 @@ FP_PIN_ORDER_CFG: dir::pin_order.cfg
 FP_MACRO_HORIZONTAL_HALO: 4.8
 FP_MACRO_VERTICAL_HALO: 4.0
 
-# 5x pure-passive poly-resistor R-2R DAC ladders placed near their West (ua[0..2]) and East (ua[3..4]) pins
+# 4x passive ramp ADC ladders near West ua[0..3] + 2x passive R-2R DAC ladders near East ua[4..5]
 MACROS:
+  r2r_ladder_4bit_sum:
+    gds:
+      - dir::../gen/adc/r2r_ladder_4bit_sum.gds
+    lef:
+      - dir::../gen/adc/r2r_ladder_4bit_sum.lef
+    vh:
+      - dir::../src/r2r_ladder_4bit_sum.v
+    lib:
+      "*":
+        - dir::../gen/adc/r2r_ladder_4bit_sum.lib
+    spice:
+      - dir::../gen/adc/r2r_ladder_4bit_sum.spice
   r2r_ladder_8bit:
     gds:
       - dir::../gen/dac/r2r_ladder_8bit.gds
@@ -69,10 +82,11 @@ PDN_VPITCH: 60
 PDN_HPITCH: 60
 PDN_ENABLE_PINS: True
 
-# Protect analog nets/drivers, ICG, and padring tie outputs from OpenROAD Resizer
+# Protect analog nets/drivers/comparators, ICG, and padring tie outputs from OpenROAD Resizer
 IGNORE_DISCONNECTED_MODULES:
   - r2r_ladder_8bit
-RSZ_DONT_TOUCH_RX: ".*(u_tiel|u_tieh|u_bufh|u_bufl|u_icg|u_term|u_buf|u_r2r|term_tie|pre_drv|term_drv|in_drv|^ua\\[).*"
+  - r2r_ladder_4bit_sum
+RSZ_DONT_TOUCH_RX: ".*(u_tiel|u_tieh|u_bufh|u_bufl|u_icg|u_term|u_buf|u_inv|u_cmp|u_r2r|term_tie|pre_drv|term_drv|in_drv|vsum|cmp_lo|^ua\\[).*"
 DESIGN_REPAIR_BUFFER_OUTPUT_PORTS: False
 EXTRA_EXCLUDED_CELLS:
   - gf180mcu_fd_sc_mcu7t5v0__dlya_1

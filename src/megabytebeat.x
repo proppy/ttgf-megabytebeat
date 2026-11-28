@@ -1,27 +1,43 @@
 // Copyright 2026 Google LLC.
 // SPDX-License-Identifier: Apache-2.0
 
-// Unified Multi-Track Bytebeat Synthesizer Proc with 5x R-2R DAC Verilog FFI.
-// Evaluates all 5 canonical bytebeat formulas from src/bytebeat.x concurrently
-// with a single shared t: u32 counter (enabling XLS cross-track CSE), holds the
-// registered `pcm: u8[5]` frame in proc state for glitch-free DAC & PWM drive, and
-// instantiates 5x sc_r2r_dac_8bit via `dac::r2r_dac_bank` with combinational `en` gating.
+// Unified Mixed-Signal Multi-Track Bytebeat Synthesizer Proc.
+// Composes 4x 4-bit ramp ADCs (`adc_ramp::AdcRamp::step` via #[extern_verilog]),
+// 5 canonical bytebeat formulas from `src/bytebeat.x` (single shared `t: u32` counter
+// enabling XLS cross-track CSE), and 2x 8-bit poly R-2R DACs (`dac::r2r_dac_bank<u32:2>`
+// via #[extern_verilog]) with combinational `en` standby power-gating.
 
 #![feature(explicit_state_access)]
 
+import adc_ramp;
 import bytebeat;
 import dac;
 
-pub proc megabytebeat {
-    en_r: chan<bool> in,
-    params_r: chan<u16> in,
-    pcm_s: chan<u8[5]> out,
-    dac_s: chan<u1[5]> out,
+pub struct State {
+    // Flopped ramp-ADC state (`step`, `done`, and per-channel crossing latches `vals`):
+    // each 4-bit conversion sweeps 16 ticks, and registering comparator results isolates
+    // raw analog `sc_adc_ramp_1ch_4b` transitions from the bytebeat/DAC combinational
+    // paths under `--flop_outputs=false`.
+    adc: adc_ramp::AdcState,
+    // Last completed 16-step ADC sweep, latched atomically on `step == 15` so mid-sweep
+    // updates to `adc.vals` never tear parameters across channels.
+    params: u16,
     t: u32,
+    // Registered 5-track PCM frame for glitch-free R-2R DAC & PWM drive under
+    // `--flop_outputs=false`.
     pcm: u8[5],
 }
 
-impl megabytebeat {
+pub proc MegaBytebeat {
+    en_r: chan<bool> in,
+    adc_in_r: chan<u4[4]> in,
+    dac_sel_r: chan<u3[2]> in,
+    pcm_s: chan<u8[5]> out,
+    dac_s: chan<u1[2]> out,
+    state: State,
+}
+
+impl MegaBytebeat {
     pub fn samples(t: u32, packed_params: u16) -> u8[5] {
         let a = packed_params[0+:u4];
         let b = packed_params[4+:u4];
@@ -36,43 +52,59 @@ impl megabytebeat {
 
     pub fn new(
         en_r: chan<bool> in,
-        params_r: chan<u16> in,
+        adc_in_r: chan<u4[4]> in,
+        dac_sel_r: chan<u3[2]> in,
         pcm_s: chan<u8[5]> out,
-        dac_s: chan<u1[5]> out,
+        dac_s: chan<u1[2]> out,
     ) -> Self {
-        // Mathematically all 5 bytebeat formulas evaluate to 0 at t=0 for *any* `params`
-        // (0 * x = 0, 0 % n = 0, (-0) >> d = 0), so initializing `pcm=[0,...]` and `t=1`
-        // keeps Frame 0 exact regardless of `params`.
-        // Registering `pcm` in proc state is required because `--flop_outputs=false` (needed
-        // so `#[extern_verilog]` `sc_r2r_dac_8bit.out` wires directly to analog pad `ua[i]`
-        // without an XLS output flop) would otherwise expose raw combinational bytebeat logic
-        // (`%`, `*`, shifts) to the R-2R DAC drivers (causing analog switching glitches), tear
-        // 256-clock PWM frames whenever `params` changes mid-frame, and couple `ui_in`/`uio_in`
-        // combinationally into the DAC/PWM outputs.
-        Self { en_r, params_r, pcm_s, dac_s, t: u32:1, pcm: u8[5]:[0, ...] }
+        Self {
+            en_r,
+            adc_in_r,
+            dac_sel_r,
+            pcm_s,
+            dac_s,
+            state: State {
+                adc: adc_ramp::ADC_INIT_STATE,
+                params: u16:0x0a2a,  // a=0xa, b=0x2, c=0xa, d=0x0
+                t: u32:0,
+                pcm: u8[5]:[0, ...],
+            },
+        }
     }
 
     fn next(self) {
-        let t = read(self.t);
-        let pcm = read(self.pcm);
+        let state = read(self.state);
         let (tok_e, en) = recv(join(), self.en_r);
-        let (tok_p, params) = recv(join(), self.params_r);
-        let tok = join(tok_e, tok_p);
-        let dacs = dac::r2r_dac_bank<u32:5>(en, pcm);
-        send(tok, self.pcm_s, pcm);
+        let (tok_a, adc_in) = recv(join(), self.adc_in_r);
+        let (tok_d, dac_sel) = recv(join(), self.dac_sel_r);
+        let tok = join(tok_e, tok_a, tok_d);
+
+        let (next_adc, _, adc_vld, adc_params) = adc_ramp::AdcRamp::step(state.adc, en, adc_in);
+        let params = if adc_vld { adc_params } else { state.params };
+        // Advance sample every 4 ticks (/64 * 4 = /256, aligned with 256-clock PWM frames).
+        let sample_tick = (state.adc.step & u4:3) == u4:3;
+        let next_pcm = if sample_tick { Self::samples(state.t, params) } else { state.pcm };
+        let next_t = if sample_tick { state.t + u32:1 } else { state.t };
+
+        let dac_codes = u8[2]:[
+            state.pcm[if dac_sel[0] < u3:5 { dac_sel[0] } else { u3:0 }],
+            state.pcm[if dac_sel[1] < u3:5 { dac_sel[1] } else { u3:1 }],
+        ];
+        let dacs = dac::r2r_dac_bank<u32:2>(en, dac_codes);
+
+        send(tok, self.pcm_s, state.pcm);
         send(tok, self.dac_s, dacs);
-        write(self.pcm, Self::samples(t, params));
-        write(self.t, t + u32:1);
+        write(self.state, State { adc: next_adc, params, t: next_t, pcm: next_pcm });
     }
 }
 
 #[test]
 fn megabytebeat_samples_test() {
     let params = u16:0x0a2a;  // a=0xa, b=0x2, c=0xa, d=0x0
-    assert_eq(megabytebeat::samples(u32:0, u16:0x0000), u8[5]:[0, 0, 0, 0, 0]);
-    assert_eq(megabytebeat::samples(u32:0, params), u8[5]:[0, 0, 0, 0, 0]);
-    assert_eq(megabytebeat::samples(u32:0, u16:0xffff), u8[5]:[0, 0, 0, 0, 0]);
-    let got = megabytebeat::samples(u32:2048, params);
+    assert_eq(MegaBytebeat::samples(u32:0, u16:0x0000), u8[5]:[0, 0, 0, 0, 0]);
+    assert_eq(MegaBytebeat::samples(u32:0, params), u8[5]:[0, 0, 0, 0, 0]);
+    assert_eq(MegaBytebeat::samples(u32:0, u16:0xffff), u8[5]:[0, 0, 0, 0, 0]);
+    let got = MegaBytebeat::samples(u32:2048, params);
     assert_eq(got[0], bytebeat::the42melody(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
     assert_eq(got[1], bytebeat::fractaltrees(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
     assert_eq(got[2], bytebeat::untitleddroid(u32:2048, u4:0xa, u4:0x2, u4:0xa, u4:0x0));
@@ -81,38 +113,62 @@ fn megabytebeat_samples_test() {
 }
 
 #[test]
-proc megabytebeat_test {
+proc MegaBytebeatTest {
     terminator: chan<bool> out,
     en_s: chan<bool> out,
-    params_s: chan<u16> out,
+    adc_in_s: chan<u4[4]> out,
+    dac_sel_s: chan<u3[2]> out,
     pcm_r: chan<u8[5]> in,
-    dac_r: chan<u1[5]> in,
+    dac_r: chan<u1[2]> in,
 }
 
-impl megabytebeat_test {
+impl MegaBytebeatTest {
     fn new(terminator: chan<bool> out) -> Self {
         let (en_s, en_r) = chan<bool>("en");
-        let (params_s, params_r) = chan<u16>("params");
+        let (adc_in_s, adc_in_r) = chan<u4[4]>("adc_in");
+        let (dac_sel_s, dac_sel_r) = chan<u3[2]>("dac_sel");
         let (pcm_s, pcm_r) = chan<u8[5]>("pcm");
-        let (dac_s, dac_r) = chan<u1[5]>("dac");
-        megabytebeat::new(en_r, params_r, pcm_s, dac_s).spawn();
-        Self { terminator, en_s, params_s, pcm_r, dac_r }
+        let (dac_s, dac_r) = chan<u1[2]>("dac");
+        MegaBytebeat::new(en_r, adc_in_r, dac_sel_r, pcm_s, dac_s).spawn();
+        Self { terminator, en_s, adc_in_s, dac_sel_s, pcm_r, dac_r }
     }
 
     fn next(self) {
-        // Sweep across default, updated, and standby-gated (en=false) frames.
-        // Frame i outputs the registered sample latched on frame i-1 (Frame 0 = 0).
-        let (tok, _) = for (i, (tok, held)): (u32, (token, u8[5])) in u32:0..u32:32 {
-            let en = i < u32:30;
-            let params = if i < u32:16 { u16:0x0a2a } else { u16:0xa375 };
-            let tok = send(tok, self.en_s, en);
-            let tok = send(tok, self.params_s, params);
-            let (tok, got_pcm) = recv(tok, self.pcm_r);
-            let (tok, got_dac) = recv(tok, self.dac_r);
-            assert_eq(got_pcm, held);
-            assert_eq(got_dac, dac::r2r_dac_bank<u32:5>(en, held));
-            (tok, megabytebeat::samples(i + u32:1, params))
-        }((join(), u8[5]:[0, ...]));
+        // Sweep 1 (16 ticks): knobs [5, 1, 3, 0] -> 0x0315 on tick 15; DAC0=track 2, DAC1=track 1.
+        let (tok, t_cnt, held_pcm) =
+            for (i, (tok, t_cnt, held_pcm)): (u32, (token, u32, u8[5])) in u32:0..u32:16 {
+                let tok = send(tok, self.en_s, true);
+                let tok = send(tok, self.adc_in_s, u4[4]:[5, 1, 3, 0]);
+                let tok = send(tok, self.dac_sel_s, u3[2]:[2, 1]);
+                let (tok, got_pcm) = recv(tok, self.pcm_r);
+                let (tok, got_dac) = recv(tok, self.dac_r);
+                assert_eq(got_pcm, held_pcm);
+                assert_eq(got_dac, u1[2]:[held_pcm[2][7+:u1], held_pcm[1][7+:u1]]);
+                if (i % u32:4) == u32:3 {
+                    let exp_params = if i == u32:15 { u16:0x0315 } else { u16:0x0a2a };
+                    (tok, t_cnt + u32:1, MegaBytebeat::samples(t_cnt, exp_params))
+                } else {
+                    (tok, t_cnt, held_pcm)
+                }
+            }((join(), u32:0, u8[5]:[0, ...]));
+
+        // Tick 16 observes the latched 0x0315 sweep result; out-of-range selectors [7, 6]
+        // fall back to [track 0, track 1]; standby en=false clamps both DACs to 0.
+        let tok = send(tok, self.en_s, true);
+        let tok = send(tok, self.adc_in_s, u4[4]:[10, 2, 10, 0]);
+        let tok = send(tok, self.dac_sel_s, u3[2]:[7, 6]);
+        let (tok, got_pcm) = recv(tok, self.pcm_r);
+        let (tok, got_dac) = recv(tok, self.dac_r);
+        assert_eq(got_pcm, held_pcm);
+        assert_eq(got_pcm, MegaBytebeat::samples(u32:3, u16:0x0315));
+        assert_eq(got_dac, u1[2]:[held_pcm[0][7+:u1], held_pcm[1][7+:u1]]);
+
+        let tok = send(tok, self.en_s, false);
+        let tok = send(tok, self.adc_in_s, u4[4]:[10, 2, 10, 0]);
+        let tok = send(tok, self.dac_sel_s, u3[2]:[2, 1]);
+        let (tok, _) = recv(tok, self.pcm_r);
+        let (tok, got_dac_off) = recv(tok, self.dac_r);
+        assert_eq(got_dac_off, u1[2]:[0, 0]);
         send(tok, self.terminator, true);
     }
 }
