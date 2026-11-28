@@ -47,7 +47,7 @@ jobs:
           xls-repo: proppy/xls
           xls-version: v0.0.0-11264-g628b096fe
           dslx-path: src/adc_ramp.x
-          dslx-top: adc_ramp
+          dslx-top: AdcRamp
           ir-path: /tmp/adc_ramp.ir
           opt-ir-path: /tmp/adc_ramp.opt.ir
           verilog-path: /tmp/adc_ramp.sv

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Unified Mixed-Signal Multi-Track Bytebeat Synthesizer Proc.
-// Composes 4x 4-bit ramp ADCs (`adc_ramp::adc_ramp_step` via #[extern_verilog]),
+// Composes 4x 4-bit ramp ADCs (`adc_ramp::AdcRamp::step` via #[extern_verilog]),
 // 5 canonical bytebeat formulas from `src/bytebeat.x` (single shared `t: u32` counter
 // enabling XLS cross-track CSE), and 2x 8-bit poly R-2R DACs (`dac::r2r_dac_bank<u32:2>`
 // via #[extern_verilog]) with combinational `en` standby power-gating.
@@ -79,7 +79,7 @@ impl MegaBytebeat {
         let (tok_d, dac_sel) = recv(join(), self.dac_sel_r);
         let tok = join(tok_e, tok_a, tok_d);
 
-        let (next_adc, _, adc_vld, adc_params) = adc_ramp::adc_ramp_step(state.adc, en, adc_in);
+        let (next_adc, _, adc_vld, adc_params) = adc_ramp::AdcRamp::step(state.adc, en, adc_in);
         let params = if adc_vld { adc_params } else { state.params };
         // Advance sample every 4 ticks (/64 * 4 = /256, aligned with 256-clock PWM frames).
         let sample_tick = (state.adc.step & u4:3) == u4:3;

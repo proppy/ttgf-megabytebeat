@@ -41,7 +41,7 @@ module tt_um_proppy_megabytebeat (
     wire [15:0] adc_in_packed = {3'b0, ua[3], 3'b0, ua[2], 3'b0, ua[1], 3'b0, ua[0]};
     wire [39:0] pcm_bus;
 
-    megabytebeat u_core (
+    megabytebeat u_megabytebeat (
         .clk(clk),
         .reset(rst),
         ._en_r(analog_en),

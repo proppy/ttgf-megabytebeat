@@ -30,31 +30,7 @@ pub fn adc_ramp_1ch(step: u4, adc_in: u4) -> u1 {
     (step < adc_in) as u1
 }
 
-// One ramp tick across all 4 channels.
-// When `en` is false (reset or deselected `!ena`), `step_eff` clamps to 4'hF so the
-// `clkinv_12` drivers hold all passive R-2R ladder inputs at 0 V (~0 nA standby).
-pub fn adc_ramp_step(
-    st: AdcState,
-    en: bool,
-    adc_in: u4[4],
-) -> (AdcState, u4, bool, u16) {
-    let step_eff = if en { st.step } else { u4:15 };
-    let is_zero = st.step == u4:0;
-    let is_last = st.step == u4:15;
-    let (next_done, next_vals) = for (i, (done, vals)): (u32, (u4, u4[4])) in u32:0..u32:4 {
-        let cmp_hi = adc_ramp_1ch(step_eff, adc_in[i]) == u1:1;
-        let d_prev = !is_zero && (st.done[i+:u1] == u1:1);
-        let trigger = !d_prev && (!cmp_hi || is_last);
-        let next_v = if trigger { st.step } else { vals[i] };
-        let done_bit = ((d_prev || trigger) as u4) << (i as u4);
-        (done | done_bit, update(vals, i, next_v))
-    }((u4:0, st.vals));
-    let params: u16 = next_vals[3] ++ next_vals[2] ++ next_vals[1] ++ next_vals[0];
-    let next_st = AdcState { step: st.step + u4:1, done: next_done, vals: next_vals };
-    (next_st, step_eff, is_last, params)
-}
-
-pub proc adc_ramp {
+pub proc AdcRamp {
     en_r: chan<bool> in,
     adc_in_r: chan<u4[4]> in,
     step_s: chan<u4> out,
@@ -62,7 +38,31 @@ pub proc adc_ramp {
     state: AdcState,
 }
 
-impl adc_ramp {
+impl AdcRamp {
+    // One ramp tick across all 4 channels.
+    // When `en` is false (reset or deselected `!ena`), `step_eff` clamps to 4'hF so the
+    // `clkinv_12` drivers hold all passive R-2R ladder inputs at 0 V (~0 nA standby).
+    pub fn step(
+        state: AdcState,
+        en: bool,
+        adc_in: u4[4],
+    ) -> (AdcState, u4, bool, u16) {
+        let step_eff = if en { state.step } else { u4:15 };
+        let is_zero = state.step == u4:0;
+        let is_last = state.step == u4:15;
+        let (next_done, next_vals) = for (i, (done, vals)): (u32, (u4, u4[4])) in u32:0..u32:4 {
+            let cmp_hi = adc_ramp_1ch(step_eff, adc_in[i]) == u1:1;
+            let d_prev = !is_zero && (state.done[i+:u1] == u1:1);
+            let trigger = !d_prev && (!cmp_hi || is_last);
+            let next_v = if trigger { state.step } else { vals[i] };
+            let done_bit = ((d_prev || trigger) as u4) << (i as u4);
+            (done | done_bit, update(vals, i, next_v))
+        }((u4:0, state.vals));
+        let params: u16 = next_vals[3] ++ next_vals[2] ++ next_vals[1] ++ next_vals[0];
+        let next_state = AdcState { step: state.step + u4:1, done: next_done, vals: next_vals };
+        (next_state, step_eff, is_last, params)
+    }
+
     pub fn new(
         en_r: chan<bool> in,
         adc_in_r: chan<u4[4]> in,
@@ -73,14 +73,14 @@ impl adc_ramp {
     }
 
     fn next(self) {
-        let st = read(self.state);
+        let state = read(self.state);
         let (tok_e, en) = recv(join(), self.en_r);
         let (tok_a, adc_in) = recv(join(), self.adc_in_r);
         let tok = join(tok_e, tok_a);
-        let (next_st, step_eff, emit_params, params) = adc_ramp_step(st, en, adc_in);
+        let (next_state, step_eff, emit_params, params) = Self::step(state, en, adc_in);
         send(tok, self.step_s, step_eff);
         send_if(tok, self.params_s, emit_params, params);
-        write(self.state, next_st);
+        write(self.state, next_state);
     }
 }
 
@@ -90,7 +90,7 @@ fn adc_ramp_step_test() {
     let targets = u4[4]:[2, 5, 8, 11];
     let (_, _, last_vld, last_packed) =
         for (i, (st, _, _, _)): (u32, (AdcState, u4, bool, u16)) in u32:0..u32:16 {
-            let (next_st, step_out, vld, packed) = adc_ramp_step(st, true, targets);
+            let (next_st, step_out, vld, packed) = AdcRamp::step(st, true, targets);
             assert_eq(step_out, i as u4);
             (next_st, step_out, vld, packed)
         }((init_st, u4:0, false, u16:0));
@@ -98,12 +98,12 @@ fn adc_ramp_step_test() {
     assert_eq(last_packed, u16:0xb852);
 
     // Standby power-gating: en=false forces step_eff=4'hF -> all clkinv_12 outputs 0 V.
-    let (_, step_off, _, _) = adc_ramp_step(init_st, false, targets);
+    let (_, step_off, _, _) = AdcRamp::step(init_st, false, targets);
     assert_eq(step_off, u4:15);
 }
 
 #[test]
-proc adc_ramp_test {
+proc AdcRampTest {
     terminator: chan<bool> out,
     en_s: chan<bool> out,
     adc_in_s: chan<u4[4]> out,
@@ -111,13 +111,13 @@ proc adc_ramp_test {
     params_r: chan<u16> in,
 }
 
-impl adc_ramp_test {
+impl AdcRampTest {
     fn new(terminator: chan<bool> out) -> Self {
         let (en_s, en_r) = chan<bool>("en");
         let (adc_in_s, adc_in_r) = chan<u4[4]>("adc_in");
         let (step_s, step_r) = chan<u4>("step");
         let (params_s, params_r) = chan<u16>("params");
-        adc_ramp::new(en_r, adc_in_r, step_s, params_s).spawn();
+        AdcRamp::new(en_r, adc_in_r, step_s, params_s).spawn();
         Self { terminator, en_s, adc_in_s, step_r, params_r }
     }
 

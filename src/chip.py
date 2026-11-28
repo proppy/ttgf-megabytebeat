@@ -341,7 +341,7 @@ def parse_ishikai_pin_order(pin_order_path: Path, die_h: float) -> dict[int, tup
 def plan_tinytapeout_placements(
     verilog_path: Path,
     def_template_path: Path,
-    core_inst: str = "u_core",
+    core_inst: str = "u_megabytebeat",
 ) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, dict[str, Any]]]:
     """Compute Tiny Tapeout 2x2 bottom-row ADC+DAC R-2R macro & clkbuf_20 driver placements."""
     specs = _build_macro_specs(verilog_path, core_inst=core_inst)
@@ -425,7 +425,7 @@ def plan_ishikai_placements(
     verilog_path: Path,
     base_cfg: dict[str, Any],
     pin_order_path: Path,
-    core_inst: str = "u_core",
+    core_inst: str = "u_megabytebeat",
 ) -> tuple[dict[str, dict[str, dict[str, Any]]], dict[str, dict[str, Any]]]:
     """Compute ISHI-KAI 960x960 macro ADC+DAC R-2R ladder & clkbuf_20 driver placements."""
     specs = _build_macro_specs(verilog_path, core_inst=core_inst)
@@ -549,7 +549,7 @@ def generate_config(
     base_config_path: Path | None = None,
     def_template_path: Path | None = None,
     pin_order_path: Path | None = None,
-    core_inst: str = "u_core",
+    core_inst: str = "u_megabytebeat",
 ) -> Path:
     """Merge base config with programmatically generated macro & clkbuf_20 driver placements."""
     out_path = out_path.resolve()
@@ -628,7 +628,7 @@ def main() -> None:
     ap.add_argument("--base-config", type=Path, default=None)
     ap.add_argument("--def-template", type=Path, default=None)
     ap.add_argument("--pin-order", type=Path, default=None)
-    ap.add_argument("--core-inst", type=str, default="u_core")
+    ap.add_argument("--core-inst", type=str, default="u_megabytebeat")
     ap.add_argument(
         "--adc-out-dir",
         type=Path,
@@ -662,10 +662,12 @@ def main() -> None:
         if find_adc_macro_instances(verilog, core_inst=args.core_inst):
             import adc
 
-            adc.build_and_verify(out_dir=args.adc_out_dir)
+            adc.build(out_dir=args.adc_out_dir)
+            adc.verify(out_dir=args.adc_out_dir)
         import dac
 
-        dac.build_and_verify(out_dir=args.dac_out_dir)
+        dac.build(out_dir=args.dac_out_dir)
+        dac.verify(out_dir=args.dac_out_dir)
 
     generate_config(
         target=args.target,

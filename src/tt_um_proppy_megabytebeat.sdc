@@ -4,7 +4,7 @@
 # Timing constraints for TTGF26c 2x2 mixed-signal `tt_um_proppy_megabytebeat` (2.048 MHz).
 # Mirrors LibreLane's base.sdc for digital I/O while:
 #   1. Excluding passive analog inout ports `ua[*]` from digital delay/load/driving-cell checks.
-#   2. Constraining `u_core`'s /64 tick-enabled state registers as a 64-cycle multicycle path
+#   2. Constraining `u_megabytebeat`'s /64 tick-enabled state registers as a 64-cycle multicycle path
 #      (keeping div64, rst_n, and 5x PWM strictly at 1-cycle).
 
 create_clock [get_ports clk] -name clk -period $::env(CLOCK_PERIOD)
@@ -50,25 +50,25 @@ set_load $cap_load $dig_outputs
 set_false_path -from $ana_ports
 set_false_path -to $ana_ports
 
-# u_core registers (state, t, pcm_bus) update strictly on tick_en = (div64 == 6'h3f) -> 64 cycles.
-# Keeping div64, rst_n, and 5x u_pwm* out of u_core_regs holds them strictly at 1-cycle.
-set u_core_regs {}
+# u_megabytebeat registers (state, t, pcm_bus) update strictly on tick_en = (div64 == 6'h3f) -> 64 cycles.
+# Keeping div64, rst_n, and 5x u_pwm* out of u_megabytebeat_regs holds them strictly at 1-cycle.
+set u_megabytebeat_regs {}
 foreach pin [all_registers -output_pins] {
     set net [get_nets -quiet -of_objects $pin]
     if { $net ne "" } {
         set net_name [get_full_name [lindex $net 0]]
-        if { [string match "*u_core.*" $net_name] || [string match "*pcm_bus*" $net_name] } {
+        if { [string match "*u_megabytebeat.*" $net_name] || [string match "*pcm_bus*" $net_name] } {
             set cell [lindex [get_cells -quiet -of_objects $pin] 0]
-            if { $cell ne "" && [lsearch -exact $u_core_regs $cell] < 0 } {
-                lappend u_core_regs $cell
+            if { $cell ne "" && [lsearch -exact $u_megabytebeat_regs $cell] < 0 } {
+                lappend u_megabytebeat_regs $cell
             }
         }
     }
 }
-if { [llength $u_core_regs] > 0 } {
-    puts "\[INFO\] Applying 64-cycle multicycle path to [llength $u_core_regs] u_core state registers."
-    set_multicycle_path -setup 64 -from $u_core_regs -to $u_core_regs
-    set_multicycle_path -hold  63 -from $u_core_regs -to $u_core_regs
+if { [llength $u_megabytebeat_regs] > 0 } {
+    puts "\[INFO\] Applying 64-cycle multicycle path to [llength $u_megabytebeat_regs] u_megabytebeat state registers."
+    set_multicycle_path -setup 64 -from $u_megabytebeat_regs -to $u_megabytebeat_regs
+    set_multicycle_path -hold  63 -from $u_megabytebeat_regs -to $u_megabytebeat_regs
 }
 
 set_clock_uncertainty $::env(CLOCK_UNCERTAINTY_CONSTRAINT) $clocks

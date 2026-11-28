@@ -34,30 +34,28 @@ REPO_ROOT = SRC_DIR.parent
 BITS = 8
 CELL_NAME = "r2r_ladder_8bit"
 AMS_SUBCKT = "sc_r2r_dac_8bit"
-DRIVER_CELL = "gf180mcu_fd_sc_mcu7t5v0__clkbuf_20"
 TT_MUX_R_OHM = 500
 TT_PAD_C_PF = 10
-AMS_INIT_COMMANDS: tuple[str, ...] = ("set ngbehavior=hsa", "set ng_nomodcheck")
-W_RES = 1.00  # um; ppolyf_u_1k_6p0 finger width
+W_RES = gf180.HRES_W
 L_1R = 20.00  # um; 1R unit finger (~20.5 kOhm) for dual 3.3 V (TTGF26c) + 5.0 V (wafer.space)
 L_2R = 19.80  # um; 2 * L_2R + clkbuf_20 R_on ~= 2 * L_1R
 
 _DC_SIM = None  # retain libngspice ctypes callback closures until next ngSpice_Init
 
+_DEFAULT_LINEARITY_LIMITS = (0.25, 0.50)
+_CORNER_LINEARITY_LIMITS: dict[tuple[str, str, float], tuple[float, float]] = {
+    ("ss", "res_ss", 3.0): (0.50, 0.50),
+    ("ff", "res_ff", 3.6): (0.50, 0.50),
+    ("ss", "res_ff", 3.0): (0.95, 0.95),
+    ("ff", "res_ss", 3.6): (0.75, 0.50),
+    ("typical", "res_typical", 5.0): (0.50, 0.50),
+    ("ff", "res_ff", 5.5): (0.55, 0.50),
+}
+
 # (corner, rcorner, vdd_V, temp_C, max_dnl_lsb, max_inl_lsb)
-PVT_CORNERS: tuple[tuple[str, str, float, float, float, float], ...] = (
-    # TTGF26c 3.3 V +/- 10% PVT (correlated, skewed, and uncorrelated MOS/res cross-corners)
-    ("typical", "res_typical", 3.3, 27.0, 0.25, 0.50),
-    ("ss", "res_ss", 3.0, 125.0, 0.50, 0.50),
-    ("ff", "res_ff", 3.6, -40.0, 0.50, 0.50),
-    ("sf", "res_typical", 3.3, 27.0, 0.25, 0.50),
-    ("fs", "res_typical", 3.3, 27.0, 0.25, 0.50),
-    ("ss", "res_ff", 3.0, 125.0, 0.95, 0.95),
-    ("ff", "res_ss", 3.6, -40.0, 0.75, 0.50),
-    # wafer.space 5.0 V +/- 10% PVT
-    ("typical", "res_typical", 5.0, 27.0, 0.50, 0.50),
-    ("ss", "res_ss", 4.5, 125.0, 0.25, 0.50),
-    ("ff", "res_ff", 5.5, -40.0, 0.55, 0.50),
+PVT_CORNERS: tuple[tuple[str, str, float, float, float, float], ...] = tuple(
+    (c, rc, vdd, temp, *_CORNER_LINEARITY_LIMITS.get((c, rc, vdd), _DEFAULT_LINEARITY_LIMITS))
+    for c, rc, vdd, temp in gf180.PVT_CORNERS
 )
 
 
@@ -547,8 +545,8 @@ def _subckt_lines(
     in_pins = " ".join(f"in{b}" for b in range(bits))
     lines = [
         f".subckt {subckt} term {in_pins} out vdd vss",
-        f"X_TERM term drv_term vdd vdd vss vss {DRIVER_CELL}",
-        *[f"X_B{b} in{b} drv{b} vdd vdd vss vss {DRIVER_CELL}" for b in range(bits)],
+        f"X_TERM term drv_term vdd vdd vss vss {gf180.CLKBUF_20_CELL}",
+        *[f"X_B{b} in{b} drv{b} vdd vdd vss vss {gf180.CLKBUF_20_CELL}" for b in range(bits)],
     ]
 
     term_r, term_c = term_rc
@@ -745,7 +743,7 @@ def measure_dc_luts(
         )
         sim = NgspiceInterface()
         _DC_SIM = sim  # retain callback closures until next ngSpice_Init
-        for cmd in AMS_INIT_COMMANDS:
+        for cmd in gf180.NGSPICE_INIT_COMMANDS:
             sim.command(cmd)
         sim.load_circuit(lines)
         sim.command(f"dc vcode 0 {n_codes - 1} 1")
@@ -829,7 +827,7 @@ def ams_block(
             *analog.ngspice_pdk_lines(corner, rcorner, pdk_root=pdk_root, temp=temp, tech=tech),
             ".options klu method=gear",
         ],
-        init_commands=list(AMS_INIT_COMMANDS),
+        init_commands=list(gf180.NGSPICE_INIT_COMMANDS),
         edge_time_ns=edge_time_ns,
         handle=handle,
     )
@@ -855,7 +853,7 @@ def _report_dac_corners(results: list[DacCornerResult], label_prefix: str) -> No
         )
 
 
-def build_and_verify(
+def build(
     out_dir: Path | None = None,
     *,
     width: int = BITS,
@@ -865,15 +863,7 @@ def build_and_verify(
     sum_res: bool = False,
     name: str | None = None,
 ) -> Path:
-    """Build passive R-2R macro, run KLayout DRC/LVS, PVT ngspice, Magic PEX, and render PNG."""
-    tool_checks = tools.check_native_tools(("klayout", "magic"))
-    bad_tools = [c for c in tool_checks if not c.ok]
-    assert not bad_tools, (
-        "Native tool version mismatch vs LibreLane "
-        f"{tools.LIBRELANE_VERSION}: "
-        + ", ".join(f"{c.name}={c.actual} (expected {c.expected})" for c in bad_tools)
-    )
-
+    """Build passive R-2R macro collateral (GDS/LEF/LIB/SPICE) and render PNG."""
     resolved_dir = out_dir or (
         REPO_ROOT / "gen/dac" if width == BITS and not sum_res else REPO_ROOT / "gen/r2r"
     )
@@ -885,34 +875,7 @@ def build_and_verify(
         sum_res=sum_res,
         name=name,
     )
-    gds, _, _, spice = analog.emit_macro(s, cell, pins, resolved_dir)
-
-    drc = analog.run_klayout_drc(gds, resolved_dir / "drc")
-    assert drc.clean, f"KLayout DRC failed on {gds}:\n{drc.log}"
-    print(f"  [Analog check | {cell.name}] KLayout DRC clean.")
-
-    lvs = analog.run_klayout_lvs(gds, spice, resolved_dir / "lvs", cell.name, pins=pins)
-    assert lvs.matched, f"KLayout LVS mismatch on {cell.name}:\n{lvs.log}"
-    assert lvs.pins_match, (
-        f"LVS extracted pin mismatch on {cell.name}: "
-        f"extracted={sorted(lvs.ext_pins)} vs expected={sorted(lvs.expected_pins)}"
-    )
-    print(f"  [Analog check | {cell.name}] KLayout LVS (component-graph schematic vs GDS) matched.")
-
-    is_8bit_dac = width == BITS and not sum_res
-    if is_8bit_dac:
-        _report_dac_corners(simulate_dac_corners(spice), label_prefix="DAC check")
-
-    pex = extract_dac_pex(gds, resolved_dir, cell_name=cell.name, bits=width, pins=pins)
-    assert pex.ok, (
-        f"Magic PEX extraction on {cell.name} produced n_res={pex.n_res}, n_cap={pex.n_cap}"
-    )
-    print(
-        f"  [Magic PEX | {cell.name}] Extracted {pex.spice_path} "
-        f"(R={pex.n_res}, C={pex.n_cap}, bleed={pex.n_float_bleed})"
-    )
-    if is_8bit_dac:
-        _report_dac_corners(simulate_dac_corners(pex.spice_path), label_prefix="DAC PEX check")
+    gds, _, _, _ = analog.emit_macro(s, cell, pins, resolved_dir)
 
     png = analog.render_gds(gds, resolved_dir / f"{cell.name}.png", width=1800, height=1200)
     print(f"[dac] Rendered {png}")
@@ -920,6 +883,67 @@ def build_and_verify(
         f"{cell.name}: {cell.info['width']:.2f} x {cell.info['height']:.2f} um "
         f"({cell.info['area']:.2f} um^2)"
     )
+    return resolved_dir
+
+
+def verify(
+    out_dir: Path | None = None,
+    *,
+    width: int = BITS,
+    sum_res: bool = False,
+    name: str | None = None,
+) -> Path:
+    """Verify built passive R-2R macro (KLayout DRC/LVS, PVT ngspice, Magic PEX)."""
+    tool_checks = tools.check_native_tools(("klayout", "magic"))
+    bad_tools = [c for c in tool_checks if not c.ok]
+    assert not bad_tools, (
+        "Native tool version mismatch vs LibreLane "
+        f"{tools.LIBRELANE_VERSION}: "
+        + ", ".join(f"{c.name}={c.actual} (expected {c.expected})" for c in bad_tools)
+    )
+
+    resolved_dir = out_dir or (
+        REPO_ROOT / "gen/dac" if width == BITS and not sum_res else REPO_ROOT / "gen/r2r"
+    )
+    cell_name = name or f"r2r_ladder_{width}bit{'_sum' if sum_res else ''}"
+    pins = [
+        "VSS",
+        "term",
+        *[f"in[{b}]" for b in range(width - 1, -1, -1)],
+        "out",
+        *(["sum_in"] if sum_res else []),
+    ]
+    gds = resolved_dir / f"{cell_name}.gds"
+    spice = resolved_dir / f"{cell_name}.spice"
+    assert gds.is_file(), f"Missing built R-2R GDS: {gds} (run dac.build() first)"
+    assert spice.is_file(), f"Missing built R-2R SPICE: {spice} (run dac.build() first)"
+
+    drc = analog.run_klayout_drc(gds, resolved_dir / "drc")
+    assert drc.clean, f"KLayout DRC failed on {gds}:\n{drc.log}"
+    print(f"  [Analog check | {cell_name}] KLayout DRC clean.")
+
+    lvs = analog.run_klayout_lvs(gds, spice, resolved_dir / "lvs", cell_name, pins=pins)
+    assert lvs.matched, f"KLayout LVS mismatch on {cell_name}:\n{lvs.log}"
+    assert lvs.pins_match, (
+        f"LVS extracted pin mismatch on {cell_name}: "
+        f"extracted={sorted(lvs.ext_pins)} vs expected={sorted(lvs.expected_pins)}"
+    )
+    print(f"  [Analog check | {cell_name}] KLayout LVS (component-graph schematic vs GDS) matched.")
+
+    is_8bit_dac = width == BITS and not sum_res
+    if is_8bit_dac:
+        _report_dac_corners(simulate_dac_corners(spice), label_prefix="DAC check")
+
+    pex = extract_dac_pex(gds, resolved_dir, cell_name=cell_name, bits=width, pins=pins)
+    assert pex.ok, (
+        f"Magic PEX extraction on {cell_name} produced n_res={pex.n_res}, n_cap={pex.n_cap}"
+    )
+    print(
+        f"  [Magic PEX | {cell_name}] Extracted {pex.spice_path} "
+        f"(R={pex.n_res}, C={pex.n_cap}, bleed={pex.n_float_bleed})"
+    )
+    if is_8bit_dac:
+        _report_dac_corners(simulate_dac_corners(pex.spice_path), label_prefix="DAC PEX check")
     return resolved_dir
 
 
@@ -932,6 +956,17 @@ def main() -> None:
     ap.add_argument("--sum-res", action="store_true", help="Add output 1R summing branch (ADC)")
     ap.add_argument("--name", type=str, default=None)
     ap.add_argument("--out-dir", type=Path, default=None)
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--build-only",
+        action="store_true",
+        help="Build GDS/LEF/LIB/SPICE and PNG without running DRC/LVS/ngspice/PEX",
+    )
+    mode.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Run DRC/LVS/ngspice/PEX verification against existing artifacts in --out-dir",
+    )
     ap.add_argument(
         "--check-spef",
         type=Path,
@@ -969,15 +1004,23 @@ def main() -> None:
             print(f"  [SPEF check | {spef.name}] OK: {format_parasitics_summary(res.channels)}")
         return
 
-    build_and_verify(
-        out_dir=args.out_dir,
-        width=args.width,
-        l_1r=args.l_1r,
-        l_2r=args.l_2r,
-        w_res=args.w_res,
-        sum_res=args.sum_res,
-        name=args.name,
-    )
+    if not args.verify_only:
+        build(
+            out_dir=args.out_dir,
+            width=args.width,
+            l_1r=args.l_1r,
+            l_2r=args.l_2r,
+            w_res=args.w_res,
+            sum_res=args.sum_res,
+            name=args.name,
+        )
+    if not args.build_only:
+        verify(
+            out_dir=args.out_dir,
+            width=args.width,
+            sum_res=args.sum_res,
+            name=args.name,
+        )
 
 
 if __name__ == "__main__":

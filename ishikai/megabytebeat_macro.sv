@@ -97,7 +97,7 @@ module megabytebeat_macro (
     wire        adc_rdy;
     wire        dac_sel_rdy;
 
-    megabytebeat u_core (
+    megabytebeat u_megabytebeat (
         .clk           (gclk),
         .reset         (rst),
         ._en_r         (analog_en),
